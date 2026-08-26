@@ -1,5 +1,6 @@
 import { DispatchRepository } from "../domain/repository";
 import { haversineDistanceMeters } from "../domain/geo";
+import { generateActivationCode } from "../domain/activation-code";
 import {
   Business,
   Courier,
@@ -50,6 +51,18 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     return { ...business };
   }
 
+  async getBusiness(businessId: string): Promise<Business | null> {
+    const business = this.businesses.get(businessId);
+    return business ? { ...business } : null;
+  }
+
+  async findOrCreateBusinessByPhone(phone: string, name: string): Promise<Business> {
+    for (const business of this.businesses.values()) {
+      if (business.phone === phone) return { ...business };
+    }
+    return this.createBusiness({ name, phone });
+  }
+
   async createCourier(input: CreateCourierInput): Promise<Courier> {
     return this.seedCourier({
       name: input.name,
@@ -69,6 +82,7 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       phone: courier.phone ?? "0000000000",
       vehiclePlate: courier.vehiclePlate ?? null,
       isActive: courier.isActive ?? true,
+      activationCode: courier.activationCode ?? generateActivationCode(),
       lat: courier.lat ?? null,
       lng: courier.lng ?? null,
       lastSeenAt: courier.lastSeenAt ?? new Date(),
@@ -83,6 +97,7 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     const order: Order = {
       id: nextId("order"),
       businessId: input.businessId,
+      requesterName: input.requesterName ?? null,
       pickup: input.pickup,
       pickupAddress: input.pickupAddress,
       dropoff: input.dropoff,
@@ -90,8 +105,13 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       customerName: input.customerName ?? null,
       customerPhone: input.customerPhone ?? null,
       notes: input.notes ?? null,
-      status: "CREATED",
+      status: input.initialStatus ?? "CREATED",
       courierId: null,
+      distanceMeters: input.distanceMeters ?? null,
+      fare: input.fare ?? null,
+      currency: input.currency ?? null,
+      paymentLink: null,
+      paymentStatus: null,
       createdAt: now,
       updatedAt: now,
       assignedAt: null,
@@ -105,6 +125,15 @@ export class InMemoryDispatchRepository implements DispatchRepository {
   async getOrder(orderId: string): Promise<Order | null> {
     const order = this.orders.get(orderId);
     return order ? { ...order } : null;
+  }
+
+  async listOrders(filter?: { statuses?: OrderStatus[]; limit?: number }): Promise<Order[]> {
+    const statuses = filter?.statuses ? new Set(filter.statuses) : null;
+    const all = Array.from(this.orders.values())
+      .filter((order) => !statuses || statuses.has(order.status))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const limit = filter?.limit ?? all.length;
+    return all.slice(0, limit).map((order) => ({ ...order }));
   }
 
   async findActiveCouriersNear(
@@ -153,6 +182,21 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       status: "ASSIGNED",
       courierId,
       assignedAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.orders.set(orderId, updated);
+    return { ...updated };
+  }
+
+  async unassignOrder(orderId: string): Promise<Order | null> {
+    const order = this.orders.get(orderId);
+    if (!order) return null;
+
+    const updated: Order = {
+      ...order,
+      status: "SEARCHING",
+      courierId: null,
+      assignedAt: null,
       updatedAt: new Date(),
     };
     this.orders.set(orderId, updated);

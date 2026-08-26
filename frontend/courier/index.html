@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WhatDomi Domiciliario</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#16794f" />
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .offer {
+        border: 2px solid var(--primary);
+        border-radius: 10px;
+        padding: 1rem;
+        background: #eef8f2;
+      }
+      .pill {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+      .pill.online {
+        background: #d7f2e3;
+        color: var(--primary-dark);
+      }
+      .pill.offline {
+        background: #f1e6e6;
+        color: #b3261e;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>WhatDomi · Domiciliario</h1>
+      <p>Regístrate una vez, guarda tu código de activación, y actívate cuando empieces a trabajar.</p>
+    </header>
+
+    <main>
+      <section id="register-section">
+        <h2>1. Registro</h2>
+        <form id="register-form">
+          <label>Nombre<input type="text" name="name" required /></label>
+          <label>Teléfono<input type="tel" name="phone" required /></label>
+          <label>Placa de la moto<input type="text" name="vehiclePlate" /></label>
+          <button type="submit">Registrarme</button>
+        </form>
+        <p id="register-status" class="status"></p>
+      </section>
+
+      <section id="activation-section" hidden>
+        <h2>2. Activarme</h2>
+        <p class="hint">Tu código de activación se te mostró al registrarte; también queda guardado en este navegador/dispositivo.</p>
+        <form id="activation-form">
+          <label>ID de domiciliario<input type="text" name="courierId" required /></label>
+          <label>Código de activación<input type="text" name="activationCode" required inputmode="numeric" /></label>
+          <button type="submit">Activarme</button>
+        </form>
+        <p><span id="status-pill" class="pill offline">Desconectado</span></p>
+        <button type="button" id="deactivate-btn" hidden>Desactivarme</button>
+        <p id="activation-status" class="status"></p>
+      </section>
+
+      <section id="offer-section" hidden>
+        <h2>3. Servicio</h2>
+        <div id="offer-container"><p class="hint">Sin ofertas por ahora. Deja la app abierta para recibir pedidos cercanos.</p></div>
+      </section>
+    </main>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+      window.WHATDOMI_API_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
+    </script>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -27,8 +27,39 @@ const acceptOrderSchema = z.object({
   courierId: z.string().min(1),
 });
 
+const ORDER_STATUS_VALUES = [
+  "CREATED",
+  "QUOTED",
+  "SEARCHING",
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "DELIVERED",
+  "CANCELLED",
+  "NO_COURIERS_AVAILABLE",
+] as const;
+
 export function createOrdersRouter(dispatch: DispatchService): Router {
   const router = Router();
+
+  /** Para el tablero de administración: lista de pedidos, opcionalmente filtrada por estado. */
+  router.get(
+    "/",
+    asyncHandler(async (req, res) => {
+      const rawStatus = req.query.status;
+      const statusValues = (Array.isArray(rawStatus) ? rawStatus : rawStatus ? [rawStatus] : [])
+        .flatMap((v) => String(v).split(","))
+        .filter(Boolean);
+
+      const statuses = z.array(z.enum(ORDER_STATUS_VALUES)).optional().safeParse(
+        statusValues.length > 0 ? statusValues : undefined
+      );
+      if (!statuses.success) return res.status(400).json({ error: statuses.error.flatten() });
+
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const orders = await dispatch.listOrders({ statuses: statuses.data, limit });
+      return res.json({ orders });
+    })
+  );
 
   router.post(
     "/",
@@ -110,6 +141,24 @@ export function createOrdersRouter(dispatch: DispatchService): Router {
       try {
         const order = await dispatch.cancelOrder(req.params.orderId);
         return res.json({ order });
+      } catch (err) {
+        if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
+        throw err;
+      }
+    })
+  );
+
+  /**
+   * Fallback manual desde el tablero de administración: el camino
+   * principal de asignación es automático, esto es solo para cuando el
+   * domiciliario asignado no puede cumplir y hay que reintentar.
+   */
+  router.post(
+    "/:orderId/reassign",
+    asyncHandler(async (req, res) => {
+      try {
+        const { order, candidates } = await dispatch.reassignOrder(req.params.orderId);
+        return res.json({ order, candidatesOffered: candidates.length });
       } catch (err) {
         if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
         throw err;

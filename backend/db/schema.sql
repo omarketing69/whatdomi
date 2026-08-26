@@ -15,13 +15,17 @@ CREATE TABLE IF NOT EXISTS businesses (
 );
 
 CREATE TABLE IF NOT EXISTS couriers (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name           TEXT NOT NULL,
-  phone          TEXT NOT NULL UNIQUE,
-  vehicle_plate  TEXT,
-  is_active      BOOLEAN NOT NULL DEFAULT false,
-  lat            DOUBLE PRECISION,
-  lng            DOUBLE PRECISION,
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name             TEXT NOT NULL,
+  phone            TEXT NOT NULL UNIQUE,
+  vehicle_plate    TEXT,
+  is_active        BOOLEAN NOT NULL DEFAULT false,
+  -- Código que el domiciliario usa para activarse desde la PWA (ver
+  -- CourierActivationService). No es un mecanismo de seguridad fuerte,
+  -- basta para el MVP; ver docs/ARCHITECTURE.md.
+  activation_code  TEXT NOT NULL,
+  lat              DOUBLE PRECISION,
+  lng              DOUBLE PRECISION,
   -- Columna geográfica derivada de lat/lng (ver trigger más abajo), usada
   -- para las consultas espaciales con el índice GiST.
   location       GEOGRAPHY(Point, 4326),
@@ -34,6 +38,8 @@ CREATE INDEX IF NOT EXISTS couriers_active_idx ON couriers (is_active);
 
 CREATE TYPE order_status AS ENUM (
   'CREATED',
+  -- Tarifa ya calculada, esperando que el solicitante la confirme por WhatsApp.
+  'QUOTED',
   'SEARCHING',
   'ASSIGNED',
   'IN_PROGRESS',
@@ -45,6 +51,8 @@ CREATE TYPE order_status AS ENUM (
 CREATE TABLE IF NOT EXISTS orders (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id        UUID NOT NULL REFERENCES businesses(id),
+  -- Nombre de quien solicita el servicio desde el negocio (no el cliente final).
+  requester_name     TEXT,
   pickup_address     TEXT NOT NULL,
   pickup_lat         DOUBLE PRECISION NOT NULL,
   pickup_lng         DOUBLE PRECISION NOT NULL,
@@ -57,6 +65,13 @@ CREATE TABLE IF NOT EXISTS orders (
   notes              TEXT,
   status             order_status NOT NULL DEFAULT 'CREATED',
   courier_id         UUID REFERENCES couriers(id),
+  distance_meters    DOUBLE PRECISION,
+  fare               NUMERIC(12, 2),
+  currency           TEXT,
+  -- Sin pagos integrados en el MVP (se maneja manual/offline); estos campos
+  -- solo dejan el espacio listo para conectar una pasarela más adelante.
+  payment_link       TEXT,
+  payment_status     TEXT,
   assigned_at        TIMESTAMPTZ,
   delivered_at       TIMESTAMPTZ,
   cancelled_at       TIMESTAMPTZ,

@@ -1,26 +1,21 @@
 import { Router } from "express";
+import { WhatsAppConversationService } from "./conversation";
+import { WhatsAppSender } from "./sender";
 
 /**
- * Stub del webhook de WhatsApp Business (formato Meta Cloud API).
+ * Webhook de WhatsApp Business, formato Meta Cloud API (verify + mensajes
+ * entrantes). Delega todo el flujo conversacional a
+ * `WhatsAppConversationService` y usa `send` para responder — hoy `send`
+ * es un stub que solo loguea (ver `sender.ts`), listo para cambiarse por
+ * una llamada real a la Graph API o a Twilio en cuanto haya credenciales.
  *
- * No hay credenciales de WhatsApp Business todavía, así que este webhook:
- *  - responde el challenge de verificación de Meta (GET), para poder
- *    registrar la URL en el panel de Meta for Developers en cuanto haya
- *    una cuenta real.
- *  - recibe mensajes entrantes (POST), los loguea, y responde con el link
- *    al formulario web donde el negocio completa los datos del domicilio
- *    (dirección, tienda, etc.), en vez de intentar sostener toda la
- *    conversación dentro de WhatsApp.
- *
- * Para producción falta: verificar la firma `X-Hub-Signature-256`, llamar
- * a la Graph API para enviar la respuesta al usuario, y manejar sesiones
- * de conversación (en qué paso del flujo está cada número).
- *
- * Twilio es la alternativa si no se quiere pasar por la verificación de
- * empresa de Meta: el shape del payload cambia, pero la estructura de este
- * router (verify + inbound) se mantiene igual.
+ * Para producción falta: verificar la firma `X-Hub-Signature-256` contra
+ * `WHATSAPP_APP_SECRET` antes de confiar en el body.
  */
-export function createWhatsAppRouter(webAppUrl: string): Router {
+export function createWhatsAppRouter(
+  conversation: WhatsAppConversationService,
+  send: WhatsAppSender
+): Router {
   const router = Router();
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN ?? "whatdomi-dev-token";
 
@@ -36,22 +31,22 @@ export function createWhatsAppRouter(webAppUrl: string): Router {
   });
 
   router.post("/webhook", (req, res) => {
-    // TODO: verificar X-Hub-Signature-256 contra WHATSAPP_APP_SECRET antes
-    // de confiar en el body, una vez haya credenciales reales.
+    // Responder rápido: Meta reintenta la entrega si no contestamos 200 a tiempo.
+    res.sendStatus(200);
+
     const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0]?.value;
     const message = change?.messages?.[0];
+    if (!message) return;
 
-    if (message) {
-      const from = message.from;
-      console.log(`[whatsapp] mensaje entrante de ${from}: ${JSON.stringify(message)}`);
-      // TODO: aquí se llamaría a la Graph API para responder algo como:
-      // "Para pedir un domiciliario completa los datos aquí: {webAppUrl}?from={from}"
-      console.log(`[whatsapp] siguiente paso sugerido: enviar link ${webAppUrl}?from=${from}`);
-    }
+    const from: string | undefined = message.from;
+    const text: string | undefined = message.text?.body;
+    if (!from || typeof text !== "string") return;
 
-    // Meta requiere responder 200 rápido para no reintentar la entrega.
-    return res.sendStatus(200);
+    conversation
+      .handleIncomingText(from, text)
+      .then((replies) => Promise.all(replies.map((reply) => send(from, reply))))
+      .catch((err) => console.error("[whatsapp] error procesando mensaje entrante", err));
   });
 
   return router;

@@ -1,10 +1,18 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import { createApp } from "./api/app";
-import { DispatchService } from "./domain/dispatch";
+import { combineNotifiers, DispatchService } from "./domain/dispatch";
+import { loadFareConfigFromEnv } from "./domain/fare";
+import { GeocodingService } from "./domain/geocoding";
 import { getPool } from "./infra/pool";
+import { AnthropicAddressNormalizer } from "./infra/geocoding/anthropic-normalizer";
+import { NominatimGeocodingProvider } from "./infra/geocoding/nominatim-provider";
+import { PassthroughAddressNormalizer } from "./infra/geocoding/passthrough-normalizer";
 import { PostgresDispatchRepository } from "./infra/postgres-repository";
 import { createSocketNotifier, createSocketServer } from "./realtime/socket";
+import { WhatsAppConversationService } from "./whatsapp/conversation";
+import { createWhatsAppDispatchNotifier } from "./whatsapp/notifier";
+import { stubWhatsAppSender } from "./whatsapp/sender";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const SEARCH_RADIUS_METERS = Number(process.env.SEARCH_RADIUS_METERS ?? 5_000);
@@ -14,11 +22,30 @@ const repo = new PostgresDispatchRepository(getPool());
 
 const httpServer = createServer();
 const io = createSocketServer(httpServer);
-const notifier = createSocketNotifier(io);
+
+const whatsappSender = stubWhatsAppSender;
+const notifier = combineNotifiers(
+  createSocketNotifier(io),
+  createWhatsAppDispatchNotifier(repo, whatsappSender)
+);
 
 const dispatch = new DispatchService(repo, notifier, SEARCH_RADIUS_METERS, MAX_CANDIDATES);
 
-const app = createApp(repo, dispatch);
+// Si hay ANTHROPIC_API_KEY, se usa un LLM para interpretar direcciones
+// informales antes de geocodificarlas; si no, se manda el texto tal cual
+// (con la ciudad/país como contexto) al geocodificador real.
+const addressNormalizer = process.env.ANTHROPIC_API_KEY
+  ? new AnthropicAddressNormalizer(process.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_MODEL)
+  : new PassthroughAddressNormalizer();
+const geocoding = new GeocodingService(addressNormalizer, new NominatimGeocodingProvider());
+const fareConfig = loadFareConfigFromEnv();
+
+const conversation = new WhatsAppConversationService(repo, dispatch, geocoding, fareConfig, undefined, {
+  city: process.env.DEFAULT_CITY,
+  country: process.env.DEFAULT_COUNTRY,
+});
+
+const app = createApp(repo, dispatch, conversation, whatsappSender);
 httpServer.on("request", app);
 
 httpServer.listen(PORT, () => {

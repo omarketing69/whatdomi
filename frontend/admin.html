@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WhatDomi - Tablero de administración</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      main {
+        max-width: 960px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.5rem 0.6rem;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+      }
+      .filters {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+      }
+      .filters button {
+        background: #eef1f0;
+        color: var(--primary-dark);
+        padding: 0.4rem 0.8rem;
+        font-weight: 500;
+      }
+      .filters button.active {
+        background: var(--primary);
+        color: white;
+      }
+      .row-actions {
+        display: flex;
+        gap: 0.4rem;
+      }
+      .row-actions button {
+        padding: 0.3rem 0.6rem;
+        font-size: 0.8rem;
+      }
+      .row-actions .danger {
+        background: #fbe9e7;
+        color: #b3261e;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 1rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>WhatDomi · Administración</h1>
+      <p>Monitoreo en vivo de los pedidos. La asignación es automática; esto es solo para ver el estado y, si hace falta, reasignar o cancelar manualmente.</p>
+    </header>
+
+    <main>
+      <section>
+        <div class="filters" id="filters"></div>
+        <div id="orders-container"><p class="empty">Cargando pedidos...</p></div>
+      </section>
+    </main>
+
+    <script>
+      window.WHATDOMI_API_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
+    </script>
+    <script src="admin.js"></script>
+  </body>
+</html>

@@ -20,11 +20,25 @@ import {
 export interface DispatchRepository {
   createBusiness(input: CreateBusinessInput): Promise<Business>;
 
+  getBusiness(businessId: string): Promise<Business | null>;
+
+  /**
+   * Usado por el flujo de WhatsApp: la primera vez que un número escribe,
+   * no hay un negocio pre-registrado detrás (no hay verificación de
+   * identidad en el MVP) — se crea uno mínimo con ese teléfono y el nombre
+   * que el solicitante dio por chat. Llamadas posteriores desde el mismo
+   * teléfono reutilizan el mismo negocio.
+   */
+  findOrCreateBusinessByPhone(phone: string, name: string): Promise<Business>;
+
   createCourier(input: CreateCourierInput): Promise<Courier>;
 
   createOrder(input: CreateOrderInput): Promise<Order>;
 
   getOrder(orderId: string): Promise<Order | null>;
+
+  /** Para el tablero de administración (solo monitoreo, no asigna nada). */
+  listOrders(filter?: { statuses?: OrderStatus[]; limit?: number }): Promise<Order[]>;
 
   /**
    * Devuelve domiciliarios activos ordenados por cercanía al punto dado,
@@ -50,6 +64,15 @@ export interface DispatchRepository {
    * fue cancelado, etc.).
    */
   tryAssignOrder(orderId: string, courierId: string): Promise<Order | null>;
+
+  /**
+   * Fallback operativo para el tablero de administración: libera la
+   * asignación actual (si la hay) y vuelve a poner el pedido en
+   * `SEARCHING`, para que `DispatchService` reintente la búsqueda. No es
+   * el camino principal (la asignación es automática) — es la salida
+   * manual cuando algo salió mal con el domiciliario asignado.
+   */
+  unassignOrder(orderId: string): Promise<Order | null>;
 
   updateOrderStatus(
     orderId: string,

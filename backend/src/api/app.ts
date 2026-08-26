@@ -6,8 +6,15 @@ import { createCouriersRouter } from "./routes/couriers";
 import { createOrdersRouter } from "./routes/orders";
 import { createBusinessesRouter, createCourierRegistrationRouter } from "./routes/registration";
 import { createWhatsAppRouter } from "../whatsapp/webhook";
+import { WhatsAppConversationService } from "../whatsapp/conversation";
+import { WhatsAppSender } from "../whatsapp/sender";
 
-export function createApp(repo: DispatchRepository, dispatch: DispatchService): Express {
+export function createApp(
+  repo: DispatchRepository,
+  dispatch: DispatchService,
+  conversation: WhatsAppConversationService,
+  whatsappSender: WhatsAppSender
+): Express {
   const app = express();
 
   app.use(cors({ origin: process.env.CORS_ORIGIN ?? "*" }));
@@ -19,7 +26,7 @@ export function createApp(repo: DispatchRepository, dispatch: DispatchService): 
   app.use("/api/businesses", createBusinessesRouter(repo));
   app.use("/api/couriers", createCourierRegistrationRouter(repo));
   app.use("/api/couriers", createCouriersRouter(repo));
-  app.use("/whatsapp", createWhatsAppRouter(process.env.WEB_APP_URL ?? "http://localhost:5173"));
+  app.use("/whatsapp", createWhatsAppRouter(conversation, whatsappSender));
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

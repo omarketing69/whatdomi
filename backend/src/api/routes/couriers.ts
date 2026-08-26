@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { CourierActivationService, CourierNotFoundError, InvalidActivationCodeError } from "../../domain/courier-activation";
 import { DispatchRepository } from "../../domain/repository";
 import { asyncHandler } from "../async-handler";
 
@@ -8,17 +9,18 @@ const locationSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
-const activeSchema = z.object({
-  isActive: z.boolean(),
+const activateSchema = z.object({
+  activationCode: z.string().min(1),
 });
 
 /**
- * Endpoints que consume la app del domiciliario: reportar ubicación en vivo
- * y cambiar entre activo/inactivo (equivalente a "abrir/cerrar sesión" para
- * recibir pedidos).
+ * Endpoints que consume la PWA del domiciliario: activarse con el código
+ * que se le entregó al registrarse (empieza a reportar ubicación y a
+ * recibir ofertas), desactivarse, y reportar ubicación en vivo.
  */
 export function createCouriersRouter(repo: DispatchRepository): Router {
   const router = Router();
+  const activation = new CourierActivationService(repo);
 
   router.get(
     "/:courierId",
@@ -42,14 +44,32 @@ export function createCouriersRouter(repo: DispatchRepository): Router {
   );
 
   router.post(
-    "/:courierId/active",
+    "/:courierId/activate",
     asyncHandler(async (req, res) => {
-      const parsed = activeSchema.safeParse(req.body);
+      const parsed = activateSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-      const courier = await repo.setCourierActive(req.params.courierId, parsed.data.isActive);
-      if (!courier) return res.status(404).json({ error: "Domiciliario no encontrado" });
-      return res.json({ courier });
+      try {
+        const courier = await activation.activate(req.params.courierId, parsed.data.activationCode);
+        return res.json({ courier });
+      } catch (err) {
+        if (err instanceof CourierNotFoundError) return res.status(404).json({ error: err.message });
+        if (err instanceof InvalidActivationCodeError) return res.status(403).json({ error: err.message });
+        throw err;
+      }
+    })
+  );
+
+  router.post(
+    "/:courierId/deactivate",
+    asyncHandler(async (req, res) => {
+      try {
+        const courier = await activation.deactivate(req.params.courierId);
+        return res.json({ courier });
+      } catch (err) {
+        if (err instanceof CourierNotFoundError) return res.status(404).json({ error: err.message });
+        throw err;
+      }
     })
   );
 

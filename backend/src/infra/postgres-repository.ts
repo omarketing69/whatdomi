@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { generateActivationCode } from "../domain/activation-code";
 import { DispatchRepository } from "../domain/repository";
 import {
   Business,
@@ -10,11 +11,13 @@ import {
   GeoPoint,
   Order,
   OrderStatus,
+  PaymentStatus,
 } from "../domain/types";
 
 type OrderRow = {
   id: string;
   business_id: string;
+  requester_name: string | null;
   pickup_address: string;
   pickup_lat: number;
   pickup_lng: number;
@@ -26,6 +29,11 @@ type OrderRow = {
   notes: string | null;
   status: OrderStatus;
   courier_id: string | null;
+  distance_meters: number | null;
+  fare: string | null;
+  currency: string | null;
+  payment_link: string | null;
+  payment_status: PaymentStatus | null;
   assigned_at: Date | null;
   delivered_at: Date | null;
   cancelled_at: Date | null;
@@ -39,6 +47,7 @@ type CourierRow = {
   phone: string;
   vehicle_plate: string | null;
   is_active: boolean;
+  activation_code: string;
   lat: number | null;
   lng: number | null;
   last_seen_at: Date | null;
@@ -67,6 +76,7 @@ function mapOrder(row: OrderRow): Order {
   return {
     id: row.id,
     businessId: row.business_id,
+    requesterName: row.requester_name,
     pickup: { lat: row.pickup_lat, lng: row.pickup_lng },
     pickupAddress: row.pickup_address,
     dropoff: { lat: row.dropoff_lat, lng: row.dropoff_lng },
@@ -76,6 +86,11 @@ function mapOrder(row: OrderRow): Order {
     notes: row.notes,
     status: row.status,
     courierId: row.courier_id,
+    distanceMeters: row.distance_meters,
+    fare: row.fare === null ? null : Number(row.fare),
+    currency: row.currency,
+    paymentLink: row.payment_link,
+    paymentStatus: row.payment_status,
     assignedAt: row.assigned_at,
     deliveredAt: row.delivered_at,
     cancelledAt: row.cancelled_at,
@@ -91,6 +106,7 @@ function mapCourier(row: CourierRow): Courier {
     phone: row.phone,
     vehiclePlate: row.vehicle_plate,
     isActive: row.is_active,
+    activationCode: row.activation_code,
     lat: row.lat,
     lng: row.lng,
     lastSeenAt: row.last_seen_at,
@@ -118,10 +134,26 @@ export class PostgresDispatchRepository implements DispatchRepository {
     return mapBusiness(rows[0]);
   }
 
+  async getBusiness(businessId: string): Promise<Business | null> {
+    const { rows } = await this.pool.query<BusinessRow>(`SELECT * FROM businesses WHERE id = $1`, [
+      businessId,
+    ]);
+    return rows[0] ? mapBusiness(rows[0]) : null;
+  }
+
+  async findOrCreateBusinessByPhone(phone: string, name: string): Promise<Business> {
+    const existing = await this.pool.query<BusinessRow>(`SELECT * FROM businesses WHERE phone = $1`, [
+      phone,
+    ]);
+    if (existing.rows[0]) return mapBusiness(existing.rows[0]);
+    return this.createBusiness({ name, phone });
+  }
+
   async createCourier(input: CreateCourierInput): Promise<Courier> {
     const { rows } = await this.pool.query<CourierRow>(
-      `INSERT INTO couriers (name, phone, vehicle_plate, is_active) VALUES ($1, $2, $3, false) RETURNING *`,
-      [input.name, input.phone, input.vehiclePlate ?? null]
+      `INSERT INTO couriers (name, phone, vehicle_plate, is_active, activation_code)
+       VALUES ($1, $2, $3, false, $4) RETURNING *`,
+      [input.name, input.phone, input.vehiclePlate ?? null, generateActivationCode()]
     );
     return mapCourier(rows[0]);
   }
@@ -129,13 +161,15 @@ export class PostgresDispatchRepository implements DispatchRepository {
   async createOrder(input: CreateOrderInput): Promise<Order> {
     const { rows } = await this.pool.query<OrderRow>(
       `INSERT INTO orders (
-         business_id, pickup_address, pickup_lat, pickup_lng,
+         business_id, requester_name, pickup_address, pickup_lat, pickup_lng,
          dropoff_address, dropoff_lat, dropoff_lng,
-         customer_name, customer_phone, notes, status
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'CREATED')
+         customer_name, customer_phone, notes, status,
+         distance_meters, fare, currency
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         input.businessId,
+        input.requesterName ?? null,
         input.pickupAddress,
         input.pickup.lat,
         input.pickup.lng,
@@ -145,6 +179,10 @@ export class PostgresDispatchRepository implements DispatchRepository {
         input.customerName ?? null,
         input.customerPhone ?? null,
         input.notes ?? null,
+        input.initialStatus ?? "CREATED",
+        input.distanceMeters ?? null,
+        input.fare ?? null,
+        input.currency ?? null,
       ]
     );
     return mapOrder(rows[0]);
@@ -155,6 +193,22 @@ export class PostgresDispatchRepository implements DispatchRepository {
       orderId,
     ]);
     return rows[0] ? mapOrder(rows[0]) : null;
+  }
+
+  async listOrders(filter?: { statuses?: OrderStatus[]; limit?: number }): Promise<Order[]> {
+    const limit = filter?.limit ?? 100;
+    if (filter?.statuses && filter.statuses.length > 0) {
+      const { rows } = await this.pool.query<OrderRow>(
+        `SELECT * FROM orders WHERE status = ANY($1::order_status[]) ORDER BY created_at DESC LIMIT $2`,
+        [filter.statuses, limit]
+      );
+      return rows.map(mapOrder);
+    }
+    const { rows } = await this.pool.query<OrderRow>(
+      `SELECT * FROM orders ORDER BY created_at DESC LIMIT $1`,
+      [limit]
+    );
+    return rows.map(mapOrder);
   }
 
   async findActiveCouriersNear(
@@ -184,6 +238,17 @@ export class PostgresDispatchRepository implements DispatchRepository {
        WHERE id = $1 AND status = 'SEARCHING' AND courier_id IS NULL
        RETURNING *`,
       [orderId, courierId]
+    );
+    return rows[0] ? mapOrder(rows[0]) : null;
+  }
+
+  async unassignOrder(orderId: string): Promise<Order | null> {
+    const { rows } = await this.pool.query<OrderRow>(
+      `UPDATE orders
+       SET status = 'SEARCHING', courier_id = NULL, assigned_at = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [orderId]
     );
     return rows[0] ? mapOrder(rows[0]) : null;
   }
