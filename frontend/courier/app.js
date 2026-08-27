@@ -37,9 +37,14 @@ if ("serviceWorker" in navigator) {
 }
 
 async function apiFetch(path, options) {
+  const stored = getStored();
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options && options.headers) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(stored?.token ? { Authorization: `Bearer ${stored.token}` } : {}),
+      ...(options && options.headers),
+    },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.error?.toString?.() || `Error ${res.status}`);
@@ -140,7 +145,7 @@ faceRegisterCaptureBtn.addEventListener("click", async () => {
   try {
     await apiFetch(`/api/couriers/${stored.courierId}/face-reference`, {
       method: "POST",
-      body: JSON.stringify({ descriptor, consent: true }),
+      body: JSON.stringify({ descriptor, consent: true, nationalId: stored.nationalId }),
     });
     faceRegisterStatus.textContent = "¡Rostro de referencia guardado! Ya puedes activarte todos los días verificándolo.";
     faceRegisterStatus.className = "status ok";
@@ -195,12 +200,12 @@ activationForm.addEventListener("submit", async (event) => {
   try {
     activationStatus.textContent = "Activando...";
     activationStatus.className = "status";
-    await apiFetch(`/api/couriers/${courierId}/activate`, {
+    const { token } = await apiFetch(`/api/couriers/${courierId}/activate`, {
       method: "POST",
       body: JSON.stringify({ nationalId, faceDescriptor: liveFaceDescriptor }),
     });
 
-    storeCourier({ ...getStored(), courierId, nationalId });
+    storeCourier({ ...getStored(), courierId, nationalId, token });
     activationStatus.textContent = "¡Activo! Ya estás visible para recibir pedidos cercanos.";
     activationStatus.className = "status ok";
     setPill(true);
@@ -273,7 +278,7 @@ function connectSocket(courierId) {
   socket.on("connect", () => socket.emit("courier:subscribe", courierId));
 
   socket.on("order:offer", ({ order, distanceMeters }) => {
-    renderOffer(order, distanceMeters, courierId);
+    renderOffer(order, distanceMeters);
   });
 
   socket.on("order:offer-cancelled", ({ orderId }) => {
@@ -310,7 +315,7 @@ function merchandiseInfoHtml(order) {
   return `<p><strong>Mercancía (${value} ${currency}):</strong> ${explanation}</p>`;
 }
 
-function renderOffer(order, distanceMeters, courierId) {
+function renderOffer(order, distanceMeters) {
   currentOfferOrderId = order.id;
   offerContainer.innerHTML = `
     <div class="offer">
@@ -324,10 +329,7 @@ function renderOffer(order, distanceMeters, courierId) {
   `;
   document.getElementById("accept-offer-btn").addEventListener("click", async () => {
     try {
-      const { order: assigned } = await apiFetch(`/api/orders/${order.id}/accept`, {
-        method: "POST",
-        body: JSON.stringify({ courierId }),
-      });
+      const { order: assigned } = await apiFetch(`/api/orders/${order.id}/accept`, { method: "POST" });
       currentOfferOrderId = null;
       renderActiveService(assigned);
     } catch (err) {

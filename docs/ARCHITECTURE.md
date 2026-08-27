@@ -371,10 +371,12 @@ datos) — es intencional para el MVP: no hay verificación de identidad
 real en ningún actor del sistema todavía (ni domiciliarios ni
 solicitantes). Además, un número de cédula es un dato personal sensible
 (PII): antes de operar a escala conviene, como mínimo, no loguearlo nunca
-en texto plano (hoy no se loguea en ningún punto del código), restringir
-qué respuestas de la API lo devuelven, y evaluar cifrarlo en reposo;
-verificarlo contra una fuente oficial (Registraduría) y/o complementarlo
-con un login por OTP de SMS/WhatsApp queda como mejora de identidad real.
+en texto plano (hoy no se loguea en ningún punto del código), y evaluar
+cifrarlo en reposo; verificarlo contra una fuente oficial (Registraduría)
+y/o complementarlo con un login por OTP de SMS/WhatsApp queda como mejora
+de identidad real. Sí se restringió qué respuestas de la API lo devuelven:
+`GET /:courierId` (que expone la cédula completa) ahora exige el token de
+sesión del propio domiciliario — ver §11.
 
 **Activarse también depende de estar al día con la comisión.** Cada vez
 que un domiciliario entrega un pedido (`DispatchService.markDelivered`),
@@ -696,6 +698,49 @@ datos de prueba sembrados directamente en otros tests.
 elaborada (no hay endpoint de "olvidé mi contraseña" en este MVP), 2FA, y
 revocación de tokens JWT antes de que expiren.
 
+**Sesión del domiciliario y autorización por recurso** (auditoría de
+seguridad, corregido en el mismo cambio): hasta esta revisión, las rutas
+de pedidos y domiciliarios no comprobaban **quién** las llamaba —
+cualquiera que adivinara un `orderId`/`courierId` podía leer el pedido
+completo de otro negocio (`GET /api/orders/:id`), el teléfono del
+domiciliario asignado (`courier-contact`), cancelar un pedido ajeno, o
+peor: aceptar/recoger/entregar un pedido pasando el `courierId` de
+**otro** domiciliario en el body, sin ser esa persona. Se cerró con dos
+piezas:
+
+1. **Token de sesión del domiciliario** (`backend/src/domain/courier-session.ts`,
+   `CourierTokenSigner`, análogo al `TokenSigner` del negocio pero con su
+   propio claim `courierId`): se emite en `POST /:courierId/activate`, que
+   es el único momento en que de verdad se sabe quién es la persona
+   (cédula + verificación facial en vivo ya confirmadas, ver §10). Dura
+   **12 horas** (no 30 días como el del negocio) porque el domiciliario ya
+   repite ese ritual completo cada vez que se activa — no hace falta una
+   sesión que le sobreviva días. De ahí en adelante, `POST /:orderId/accept`,
+   `/picked-up`, `/delivered`, `POST /api/couriers/:id/deactivate`,
+   `/location` y `GET /api/couriers/:id` exigen este token
+   (`Authorization: Bearer <token>`, `requireCourierAuth`) y comparan el
+   `courierId` del token contra el recurso — nunca contra un valor tomado
+   del body o la URL sin verificar. `POST /:courierId/face-reference` es
+   la excepción: ocurre *antes* de la primera activación (todavía no hay
+   token), así que exige la cédula en el body como credencial en su lugar
+   — sin eso, cualquiera que supiera el `courierId` podía sobreescribir el
+   rostro de referencia de otro domiciliario y luego activarse "como él".
+2. **Autorización por dueño en las rutas de pedidos**: `GET /api/orders/:id`,
+   `/courier-contact` y `/cancel` ahora exigen el token del **negocio
+   dueño** del pedido (`requireBusinessAuth` + comparar `order.businessId`);
+   `/cancel` además acepta la clave de admin (`X-Admin-Key`) como vía
+   alterna, porque el panel de administración también cancela pedidos
+   ajenos como fallback. `GET /api/orders/:id/courier-location` se dejó
+   sin autenticar a propósito: solo expone lat/lng del domiciliario, el
+   mismo dato mínimo que ya expone `/nearby` públicamente.
+
+Esto se acompañó de una máquina de estados con actor en
+`DispatchService` (`markPickedUp`/`markDelivered` ahora exigen el
+`courierId` del token y validan el estado previo esperado —
+`NotOrderOwnerError`/`InvalidOrderStateError`/`OrderAlreadyTerminalError`,
+ver §4) para que ni siquiera con un token válido se pueda saltar pasos
+del ciclo de vida del pedido o tocar el de otro domiciliario.
+
 ## 12. Fuera de alcance en este MVP
 
 - **Pagos**: tanto el cobro del servicio (negocio → domiciliario) como el
@@ -732,24 +777,26 @@ revocación de tokens JWT antes de que expiren.
 
 ## 13. Consideraciones para producción (fuera del alcance del MVP)
 
-- **Autenticación/autorización real para los 3 roles**: el negocio ya
-  tiene cuenta propia (email + contraseña + JWT, ver §11), pero el admin
-  sigue protegido solo por una clave compartida por cabecera (suficiente
-  para un solo operador de la plataforma, no para un equipo), y el
-  domiciliario no tiene cuenta más allá de su cédula (§7). Antes de
-  producción a mayor escala: cuentas con usuario/contraseña o magic link
-  para admins (con roles si hay más de un operador), revocación de tokens
-  JWT del negocio (hoy no hay — ver §11), y verificar la cédula del
-  domiciliario contra una fuente oficial en vez de solo tomarla tal cual
-  la escribió.
+- **Autenticación/autorización real para los 3 roles**: el negocio tiene
+  cuenta propia (email + contraseña + JWT, ver §11) y el domiciliario
+  ahora recibe un token de sesión de 12h al activarse (cédula +
+  verificación facial, ver §11 y §10) que sus rutas exigen y verifican
+  contra el recurso — pero el admin sigue protegido solo por una clave
+  compartida por cabecera (suficiente para un solo operador de la
+  plataforma, no para un equipo). Antes de producción a mayor escala:
+  cuentas con usuario/contraseña o magic link para admins (con roles si
+  hay más de un operador), revocación de tokens JWT tanto del negocio como
+  del domiciliario (hoy ninguno de los dos la tiene — ver §11), y
+  verificar la cédula del domiciliario contra una fuente oficial en vez de
+  solo tomarla tal cual la escribió.
 - **Rate limiting** en los endpoints públicos, especialmente
   `/api/auth/login` y `/api/auth/register` (hoy sin límite de intentos).
 - **Dato biométrico en reposo**: `Courier.faceDescriptor` (§10) hoy se
-  guarda tal cual en Postgres (columna `JSONB`), igual que la cédula. Antes
-  de producción conviene cifrarlo en reposo, restringir qué respuestas de
-  la API lo devuelven (hoy `GET /api/couriers/:id` lo incluye completo), y
+  guarda tal cual en Postgres (columna `JSONB`), igual que la cédula.
+  `GET /api/couriers/:id` lo incluye completo, pero ya solo el propio
+  domiciliario puede pedirlo (ver §11) — falta cifrarlo en reposo y
   definir una política de retención/borrado si un domiciliario deja la
-  plataforma — además de resolver el punto legal de habeas data que ya
+  plataforma, además de resolver el punto legal de habeas data que ya
   señala §10.
 - **Estado de la cascada de asignación en memoria** (§4): el mapa
   `orderId → cascada` vive en el proceso de Node, no en la base de datos.

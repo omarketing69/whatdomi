@@ -88,6 +88,28 @@ export class InvalidOrderStateError extends Error {
   }
 }
 
+/** El pedido ya llegó a un estado final (`DELIVERED`/`CANCELLED`) y no admite más transiciones. */
+export class OrderAlreadyTerminalError extends Error {
+  constructor(orderId: string, status: OrderStatus) {
+    super(`El pedido ${orderId} ya está en un estado final (${status}) y no se puede modificar`);
+    this.name = "OrderAlreadyTerminalError";
+  }
+}
+
+/**
+ * El domiciliario que intenta la acción no es quien tiene asignado este
+ * pedido — máquina de estados con actor: `markPickedUp`/`markDelivered`
+ * no solo validan el estado anterior (`InvalidOrderStateError`), sino que
+ * comprueban que quien ejecuta la transición sea el domiciliario dueño
+ * del pedido, no cualquiera que conozca su `orderId`.
+ */
+export class NotOrderOwnerError extends Error {
+  constructor(orderId: string, courierId: string) {
+    super(`El domiciliario ${courierId} no es quien tiene asignado el pedido ${orderId}`);
+    this.name = "NotOrderOwnerError";
+  }
+}
+
 /**
  * El domiciliario ya tiene otro pedido `ASSIGNED`/`IN_PROGRESS` sin
  * entregar — no puede tomar uno nuevo hasta cerrar el que tiene (ver
@@ -249,7 +271,7 @@ export class DispatchService {
     const distanceToDropoff = haversineDistanceMeters(point, order.dropoff);
     if (distanceToDropoff > this.deliveryGeofenceMeters) return;
 
-    await this.markDelivered(order.id);
+    await this.markDelivered(order.id, courierId);
   }
 
   /**
@@ -282,7 +304,18 @@ export class DispatchService {
     return assigned;
   }
 
-  async markPickedUp(orderId: string): Promise<Order> {
+  /**
+   * Máquina de estados con actor: no basta con que el pedido esté
+   * `ASSIGNED`, tiene que estarlo justo con este domiciliario — quien
+   * llame (la ruta HTTP) debe pasar un `courierId` que ya haya verificado
+   * de verdad (su sesión), nunca uno tomado directamente del body/URL sin
+   * autenticar.
+   */
+  async markPickedUp(orderId: string, courierId: string): Promise<Order> {
+    const order = await this.repo.getOrder(orderId);
+    if (!order) throw new OrderNotFoundError(orderId);
+    if (order.courierId !== courierId) throw new NotOrderOwnerError(orderId, courierId);
+    if (order.status !== "ASSIGNED") throw new InvalidOrderStateError(orderId, "ASSIGNED", order.status);
     return this.transitionStatus(orderId, "IN_PROGRESS");
   }
 
@@ -292,8 +325,19 @@ export class DispatchService {
    * `SettlementService.recomputeSettlement`) — así el monto que le
    * corresponde pagar a la plataforma queda al día apenas termina cada
    * servicio, no al final del día en un proceso aparte.
+   *
+   * Mismo actor + estado previo que `markPickedUp`: solo el domiciliario
+   * asignado, y solo desde `IN_PROGRESS` (tuvo que recoger primero). El
+   * cierre automático por geocerca (`tryAutoCompleteByGeofence`) pasa el
+   * `courierId` que ya conoce de su propio reporte de ubicación — sigue
+   * siendo la misma comprobación, no un atajo que se la salte.
    */
-  async markDelivered(orderId: string): Promise<Order> {
+  async markDelivered(orderId: string, courierId: string): Promise<Order> {
+    const order = await this.repo.getOrder(orderId);
+    if (!order) throw new OrderNotFoundError(orderId);
+    if (order.courierId !== courierId) throw new NotOrderOwnerError(orderId, courierId);
+    if (order.status !== "IN_PROGRESS") throw new InvalidOrderStateError(orderId, "IN_PROGRESS", order.status);
+
     const updated = await this.transitionStatus(orderId, "DELIVERED", { deliveredAt: new Date() });
     if (updated.courierId && this.settlements) {
       await this.settlements.recomputeSettlement(updated.courierId, isoDate(updated.deliveredAt ?? new Date()));
@@ -301,7 +345,18 @@ export class DispatchService {
     return updated;
   }
 
+  /**
+   * Cancelable desde cualquier estado activo, pero nunca desde uno ya
+   * terminal (`DELIVERED`/`CANCELLED`) — evita, por ejemplo, cancelar un
+   * pedido que ya se entregó y distorsionar su liquidación.
+   */
   async cancelOrder(orderId: string): Promise<Order> {
+    const order = await this.repo.getOrder(orderId);
+    if (!order) throw new OrderNotFoundError(orderId);
+    if (order.status === "DELIVERED" || order.status === "CANCELLED") {
+      throw new OrderAlreadyTerminalError(orderId, order.status);
+    }
+
     this.clearCascade(orderId);
     return this.transitionStatus(orderId, "CANCELLED", { cancelledAt: new Date() });
   }

@@ -153,19 +153,23 @@ curl -X POST http://localhost:3000/api/couriers \
 
 # 3a. Registra su rostro de referencia una sola vez (en la PWA real, el
 #     descriptor de 128 números lo calcula face-api.js en el navegador a
-#     partir de la cámara; aquí se manda un arreglo de ejemplo a mano)
+#     partir de la cámara; aquí se manda un arreglo de ejemplo a mano).
+#     La cédula en el body hace de credencial: todavía no existe token de
+#     sesión en este punto (es previo a la primera activación).
 curl -X POST http://localhost:3000/api/couriers/<courierId>/face-reference \
   -H "Content-Type: application/json" \
-  -d '{"descriptor":[0.1, 0.2, ...128 números en total...], "consent": true}'
+  -d '{"descriptor":[0.1, 0.2, ...128 números en total...], "consent": true, "nationalId":"1020304050"}'
 
 # 3b. Se activa con su cédula + una selfie en vivo (el descriptor debe
-#     coincidir con el de referencia dentro del umbral, ver más abajo) y
-#     reporta ubicación
+#     coincidir con el de referencia dentro del umbral, ver más abajo).
+#     Devuelve un token de sesión (12h) que las siguientes rutas exigen.
 curl -X POST http://localhost:3000/api/couriers/<courierId>/activate \
   -H "Content-Type: application/json" \
   -d '{"nationalId":"1020304050", "faceDescriptor":[0.1, 0.2, ...128 números...]}'
+# → { "courier": { ... }, "token": "..." }
 curl -X POST http://localhost:3000/api/couriers/<courierId>/location \
-  -H "Content-Type: application/json" -d '{"lat":4.6533,"lng":-74.0836}'
+  -H "Content-Type: application/json" -H "Authorization: Bearer <courierToken>" \
+  -d '{"lat":4.6533,"lng":-74.0836}'
 
 # 4. El negocio (autenticado con el token del paso 1) cotiza un pedido
 curl -X POST http://localhost:3000/api/business/orders/quote \
@@ -177,9 +181,11 @@ curl -X POST http://localhost:3000/api/business/orders/quote \
 curl -X POST http://localhost:3000/api/business/orders/<orderId>/confirm \
   -H "Authorization: Bearer <token>"
 
-# 6. El domiciliario acepta (solo funciona si le toca el turno en la cascada)
+# 6. El domiciliario acepta con su propio token de sesión (solo funciona
+#    si le toca el turno en la cascada; el courierId sale del token, no
+#    de un campo que se pueda falsificar)
 curl -X POST http://localhost:3000/api/orders/<orderId>/accept \
-  -H "Content-Type: application/json" -d '{"courierId":"<courierId>"}'
+  -H "Authorization: Bearer <courierToken>"
 ```
 
 ## Ciclo de vida de un pedido
@@ -281,20 +287,21 @@ funcionalidad, incluida la validación en navegador con Playwright).
 | POST | `/api/business/orders/quote` | Cotizar un pedido (autenticado): recogida = ubicación registrada del negocio salvo que se sobreescriba, entrega en texto libre; `merchandiseValue`/`paymentMode` opcionales |
 | POST | `/api/business/orders/:id/confirm` | Confirmar la cotización propia (autenticado, `403` si el pedido es de otro negocio) — arranca la cascada de asignación |
 | POST | `/api/couriers` | Registrar un domiciliario (nombre, teléfono de contacto, `nationalId`/cédula, placa) |
-| POST | `/api/couriers/:id/face-reference` | Registrar/reemplazar el rostro de referencia (`{"descriptor":[128 números],"consent":true}`, `400` sin consentimiento) |
-| POST | `/api/couriers/:id/activate` | Activarse con la cédula + un descriptor facial en vivo (`{"nationalId","faceDescriptor":[128 números]}`; `428` si no registró rostro, `403` si no coincide, `402` si tiene comisión pendiente de días anteriores) |
-| POST | `/api/couriers/:id/deactivate` | Desactivarse (sin necesitar la cédula ni el rostro) |
-| POST | `/api/couriers/:id/location` | Reportar ubicación en vivo (también dispara el cierre automático por geocerca si hay un pedido `IN_PROGRESS`) |
+| POST | `/api/couriers/:id/face-reference` | Registrar/reemplazar el rostro de referencia (`{"descriptor":[128 números],"consent":true,"nationalId":"..."}`; `400` sin consentimiento, `403` si la cédula no coincide) |
+| POST | `/api/couriers/:id/activate` | Activarse con la cédula + un descriptor facial en vivo (`{"nationalId","faceDescriptor":[128 números]}`; `428` si no registró rostro, `403` si no coincide, `402` si tiene comisión pendiente de días anteriores); devuelve `{"courier","token"}` — el token de sesión (12h) que exigen las rutas de abajo |
+| GET | `/api/couriers/:id` | Datos completos del domiciliario (cédula, descriptor facial) — requiere su propio token de sesión (`403` si es de otro) |
+| POST | `/api/couriers/:id/deactivate` | Desactivarse — requiere el token de sesión propio |
+| POST | `/api/couriers/:id/location` | Reportar ubicación en vivo (también dispara el cierre automático por geocerca si hay un pedido `IN_PROGRESS`) — requiere el token de sesión propio |
 | GET | `/api/couriers/nearby?lat=&lng=&radiusMeters=` | Domiciliarios activos cerca de un punto (para el mapa; sin teléfono ni cédula) |
 | POST | `/api/orders` | Crear una solicitud de domicilio directa, sin cotizar (primitivo interno, sin UI en el MVP) |
 | GET | `/api/orders` | Listar pedidos, opcional `?status=SEARCHING,ASSIGNED,UNASSIGNED,...` (tablero de administración) |
-| GET | `/api/orders/:id` | Consultar estado de un pedido |
+| GET | `/api/orders/:id` | Consultar estado de un pedido — requiere el token del negocio dueño |
 | GET | `/api/orders/:id/courier-location` | Ubicación en vivo del domiciliario ya asignado a este pedido (para el mapa; `{"location":null}` si aún no hay ninguno) |
-| GET | `/api/orders/:id/courier-contact` | Nombre, placa y teléfono del domiciliario asignado (para el dashboard; `{"courier":null}` si aún no hay ninguno) |
-| POST | `/api/orders/:id/accept` | El domiciliario al que le toca el turno acepta el pedido (`409` si no es su turno o ya no está disponible) |
-| POST | `/api/orders/:id/picked-up` | Marcar como recogido / en curso (arranca el segundo tramo del mapa y la geocerca de entrega) |
-| POST | `/api/orders/:id/delivered` | Marcar como entregado a mano (respaldo del cierre automático por geocerca) |
-| POST | `/api/orders/:id/cancel` | Cancelar el pedido |
+| GET | `/api/orders/:id/courier-contact` | Nombre, placa y teléfono del domiciliario asignado (para el dashboard; `{"courier":null}` si aún no hay ninguno) — requiere el token del negocio dueño |
+| POST | `/api/orders/:id/accept` | El domiciliario cuyo token es al que le toca el turno acepta el pedido (`courierId` sale del token, no del body; `409` si no es su turno o ya no está disponible) |
+| POST | `/api/orders/:id/picked-up` | Marcar como recogido / en curso (arranca el segundo tramo del mapa y la geocerca de entrega) — requiere el token del domiciliario asignado (`403` si es otro) |
+| POST | `/api/orders/:id/delivered` | Marcar como entregado a mano (respaldo del cierre automático por geocerca) — requiere el token del domiciliario asignado (`403` si es otro) |
+| POST | `/api/orders/:id/cancel` | Cancelar el pedido — token del negocio dueño, o `X-Admin-Key` |
 | POST | `/api/orders/:id/reassign` | Fallback del admin: libera la asignación actual y reintenta la cascada completa desde cero |
 | POST | `/api/orders/:id/assign` | Última instancia del admin: asigna a mano un pedido `UNASSIGNED` con `{"courierId": "..."}` |
 | GET | `/api/admin/config` | Configuración vigente de tarifa/comisión |
@@ -307,9 +314,14 @@ funcionalidad, incluida la validación en navegador con Playwright).
 `GET /api/orders`, `POST /api/orders/:id/reassign`, `POST /api/orders/:id/assign`
 y todo `/api/admin/*` están protegidos por la clave de administrador
 (`ADMIN_API_KEY`, cabecera `X-Admin-Key`) — ver "Los 3 roles" arriba y
-`docs/ARCHITECTURE.md` §2. Las rutas `/api/business/orders/*` y
-`GET /api/auth/me` están protegidas por el token JWT del negocio
-(`Authorization: Bearer <token>`).
+`docs/ARCHITECTURE.md` §2. Las rutas `/api/business/orders/*`,
+`GET /api/auth/me`, `GET /api/orders/:id`, `courier-contact` y `cancel`
+están protegidas por el token JWT del negocio (`Authorization: Bearer <token>`,
+`403` si el pedido no es suyo). `GET /api/couriers/:id`, `deactivate`,
+`location`, `accept`, `picked-up` y `delivered` están protegidas por el
+token de sesión del domiciliario (mismo esquema de cabecera, emitido por
+`/activate`, ver `docs/ARCHITECTURE.md` §11) — `403` si el token no
+corresponde al dueño del recurso.
 
 Eventos de Socket.io emitidos por el backend: `order:offer` (a cada
 domiciliario candidato), `order:won` (al ganador), `order:status` (a quien

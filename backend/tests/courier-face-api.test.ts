@@ -19,7 +19,7 @@ describe("POST /api/couriers/:courierId/face-reference", () => {
 
     const res = await request(app)
       .post(`/api/couriers/${courier.id}/face-reference`)
-      .send({ descriptor: makeDescriptor(0.1), consent: false });
+      .send({ descriptor: makeDescriptor(0.1), consent: false, nationalId: courier.nationalId });
 
     expect(res.status).toBe(400);
     const stored = await repo.getCourier(courier.id);
@@ -32,7 +32,7 @@ describe("POST /api/couriers/:courierId/face-reference", () => {
 
     const res = await request(app)
       .post(`/api/couriers/${courier.id}/face-reference`)
-      .send({ descriptor: [1, 2, 3], consent: true });
+      .send({ descriptor: [1, 2, 3], consent: true, nationalId: courier.nationalId });
 
     expect(res.status).toBe(400);
   });
@@ -43,7 +43,7 @@ describe("POST /api/couriers/:courierId/face-reference", () => {
 
     const res = await request(app)
       .post(`/api/couriers/${courier.id}/face-reference`)
-      .send({ descriptor: makeDescriptor(0.1), consent: true });
+      .send({ descriptor: makeDescriptor(0.1), consent: true, nationalId: courier.nationalId });
 
     expect(res.status).toBe(200);
     expect(res.body.courier.faceDescriptor).toHaveLength(FACE_DESCRIPTOR_LENGTH);
@@ -54,8 +54,21 @@ describe("POST /api/couriers/:courierId/face-reference", () => {
     const { app } = makeApp();
     const res = await request(app)
       .post(`/api/couriers/no-existe/face-reference`)
-      .send({ descriptor: makeDescriptor(0.1), consent: true });
+      .send({ descriptor: makeDescriptor(0.1), consent: true, nationalId: "000000" });
     expect(res.status).toBe(404);
+  });
+
+  it("403 si la cédula no coincide con la del domiciliario (evita que cualquiera sobreescriba el rostro de otro)", async () => {
+    const { repo, app } = makeApp();
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000018", nationalId: "573000000018" });
+
+    const res = await request(app)
+      .post(`/api/couriers/${courier.id}/face-reference`)
+      .send({ descriptor: makeDescriptor(0.1), consent: true, nationalId: "000000" });
+
+    expect(res.status).toBe(403);
+    const stored = await repo.getCourier(courier.id);
+    expect(stored?.faceDescriptor).toBeNull();
   });
 });
 
@@ -76,7 +89,7 @@ describe("POST /api/couriers/:courierId/activate (con verificación facial)", ()
     const courier = await repo.createCourier({ name: "Ana", phone: "+573000000014", nationalId: "573000000014" });
     await request(app)
       .post(`/api/couriers/${courier.id}/face-reference`)
-      .send({ descriptor: makeDescriptor(0.1), consent: true });
+      .send({ descriptor: makeDescriptor(0.1), consent: true, nationalId: courier.nationalId });
 
     const res = await request(app)
       .post(`/api/couriers/${courier.id}/activate`)
@@ -91,7 +104,7 @@ describe("POST /api/couriers/:courierId/activate (con verificación facial)", ()
     const courier = await repo.createCourier({ name: "Ana", phone: "+573000000015", nationalId: "573000000015" });
     await request(app)
       .post(`/api/couriers/${courier.id}/face-reference`)
-      .send({ descriptor: makeDescriptor(0.1), consent: true });
+      .send({ descriptor: makeDescriptor(0.1), consent: true, nationalId: courier.nationalId });
 
     const res = await request(app)
       .post(`/api/couriers/${courier.id}/activate`)
@@ -99,6 +112,8 @@ describe("POST /api/couriers/:courierId/activate (con verificación facial)", ()
 
     expect(res.status).toBe(200);
     expect(res.body.courier.isActive).toBe(true);
+    expect(typeof res.body.token).toBe("string");
+    expect(res.body.token.length).toBeGreaterThan(0);
   });
 
   it("400 si falta el descriptor facial en la activación", async () => {

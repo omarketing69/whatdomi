@@ -1,6 +1,7 @@
 import cors from "cors";
 import express, { Express } from "express";
 import { BusinessAuthService, TokenSigner } from "../domain/business-auth";
+import { CourierTokenSigner } from "../domain/courier-session";
 import { DispatchService } from "../domain/dispatch";
 import { GeocodingService } from "../domain/geocoding";
 import { DispatchRepository } from "../domain/repository";
@@ -24,12 +25,13 @@ export interface CreateAppDeps {
   dispatch: DispatchService;
   businessAuth: BusinessAuthService;
   tokens: TokenSigner;
+  courierTokens: CourierTokenSigner;
   geocoding: GeocodingService;
   locationContext?: { city?: string; country?: string };
 }
 
 export function createApp(deps: CreateAppDeps): Express {
-  const { repo, dispatch, businessAuth, tokens, geocoding, locationContext = {} } = deps;
+  const { repo, dispatch, businessAuth, tokens, courierTokens, geocoding, locationContext = {} } = deps;
   const app = express();
 
   app.use(cors({ origin: process.env.CORS_ORIGIN ?? "*" }));
@@ -37,11 +39,11 @@ export function createApp(deps: CreateAppDeps): Express {
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
-  app.use("/api/orders", createOrdersRouter(dispatch, repo));
+  app.use("/api/orders", createOrdersRouter(dispatch, repo, tokens, courierTokens));
   app.use("/api/auth", createBusinessAuthRouter(businessAuth, tokens, repo));
   app.use("/api/business/orders", createBusinessOrdersRouter(repo, dispatch, geocoding, tokens, locationContext));
   app.use("/api/couriers", createCourierRegistrationRouter(repo));
-  app.use("/api/couriers", createCouriersRouter(repo, dispatch));
+  app.use("/api/couriers", createCouriersRouter(repo, dispatch, courierTokens));
   app.use("/api/admin", createAdminRouter(repo));
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

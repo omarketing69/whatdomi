@@ -10,6 +10,7 @@ import { AnthropicAddressNormalizer } from "./infra/geocoding/anthropic-normaliz
 import { NominatimGeocodingProvider } from "./infra/geocoding/nominatim-provider";
 import { PassthroughAddressNormalizer } from "./infra/geocoding/passthrough-normalizer";
 import { createJwtTokenSigner } from "./infra/jwt-token-signer";
+import { createCourierJwtTokenSigner } from "./infra/courier-jwt-token-signer";
 import { createBcryptPasswordHasher } from "./infra/password-hasher";
 import { PostgresDispatchRepository } from "./infra/postgres-repository";
 import { createSocketNotifier, createSocketServer } from "./realtime/socket";
@@ -55,6 +56,10 @@ const geocoding = new GeocodingService(addressNormalizer, new NominatimGeocoding
 const locationContext = { city: process.env.DEFAULT_CITY, country: process.env.DEFAULT_COUNTRY };
 
 const tokens = createJwtTokenSigner(JWT_SECRET);
+// Mismo secreto que el token de negocio: el claim (`courierId` vs
+// `businessId`) ya los distingue, así que compartirlo no permite usar uno
+// como el otro — ver docs/ARCHITECTURE.md §11.
+const courierTokens = createCourierJwtTokenSigner(JWT_SECRET);
 const businessAuth = new BusinessAuthService(
   repo,
   geocoding,
@@ -66,7 +71,7 @@ const businessAuth = new BusinessAuthService(
 // La tarifa y la comisión ya no se leen de variables de entorno en cada
 // cotización: viven en la tabla `platform_config` (editable por el admin
 // desde /api/admin/config), sembrada por db/schema.sql.
-const app = createApp({ repo, dispatch, businessAuth, tokens, geocoding, locationContext });
+const app = createApp({ repo, dispatch, businessAuth, tokens, courierTokens, geocoding, locationContext });
 httpServer.on("request", app);
 
 httpServer.listen(PORT, () => {

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   DispatchService,
   DispatchNotifier,
+  InvalidOrderStateError,
+  NotOrderOwnerError,
   OrderAlreadyTakenError,
+  OrderAlreadyTerminalError,
   OrderNotFoundError,
 } from "../src/domain/dispatch";
 import { InMemoryDispatchRepository } from "../src/testing/in-memory-repository";
@@ -179,10 +182,10 @@ describe("ciclo de vida del pedido", () => {
     const { order } = await service.createDeliveryRequest(baseOrderInput());
     await service.acceptOrder(order.id, courier.id);
 
-    const pickedUp = await service.markPickedUp(order.id);
+    const pickedUp = await service.markPickedUp(order.id, courier.id);
     expect(pickedUp.status).toBe("IN_PROGRESS");
 
-    const delivered = await service.markDelivered(order.id);
+    const delivered = await service.markDelivered(order.id, courier.id);
     expect(delivered.status).toBe("DELIVERED");
     expect(delivered.deliveredAt).not.toBeNull();
   });
@@ -196,11 +199,53 @@ describe("ciclo de vida del pedido", () => {
 
     const { order } = await service.createDeliveryRequest({ ...baseOrderInput(), fare: 5000 });
     await service.acceptOrder(order.id, courier.id);
-    const delivered = await service.markDelivered(order.id);
+    await service.markPickedUp(order.id, courier.id);
+    const delivered = await service.markDelivered(order.id, courier.id);
 
     const settlement = await repo.getSettlement(courier.id, isoDate(delivered.deliveredAt as Date));
     expect(settlement).not.toBeNull();
     expect(settlement?.totalEarned).toBe(5000);
     expect(settlement?.commissionAmount).toBe(500);
+  });
+
+  it("rechaza que un domiciliario distinto al asignado marque el pedido como recogido o entregado", async () => {
+    const repo = new InMemoryDispatchRepository();
+    const courier = repo.seedCourier({ isActive: true, lat: 4.654, lng: -74.084 });
+    const otherCourier = repo.seedCourier({ isActive: true, lat: 4.655, lng: -74.085 });
+    const service = new DispatchService(repo);
+
+    const { order } = await service.createDeliveryRequest(baseOrderInput());
+    await service.acceptOrder(order.id, courier.id);
+
+    await expect(service.markPickedUp(order.id, otherCourier.id)).rejects.toBeInstanceOf(NotOrderOwnerError);
+    await service.markPickedUp(order.id, courier.id);
+    await expect(service.markDelivered(order.id, otherCourier.id)).rejects.toBeInstanceOf(NotOrderOwnerError);
+  });
+
+  it("rechaza marcar como recogido un pedido que no está ASSIGNED, o entregado uno que no está IN_PROGRESS", async () => {
+    const repo = new InMemoryDispatchRepository();
+    const courier = repo.seedCourier({ isActive: true, lat: 4.654, lng: -74.084 });
+    const service = new DispatchService(repo);
+
+    const { order } = await service.createDeliveryRequest(baseOrderInput());
+    await service.acceptOrder(order.id, courier.id);
+
+    await expect(service.markDelivered(order.id, courier.id)).rejects.toBeInstanceOf(InvalidOrderStateError);
+
+    await service.markPickedUp(order.id, courier.id);
+    await expect(service.markPickedUp(order.id, courier.id)).rejects.toBeInstanceOf(InvalidOrderStateError);
+  });
+
+  it("rechaza cancelar un pedido ya entregado o ya cancelado", async () => {
+    const repo = new InMemoryDispatchRepository();
+    const courier = repo.seedCourier({ isActive: true, lat: 4.654, lng: -74.084 });
+    const service = new DispatchService(repo);
+
+    const { order } = await service.createDeliveryRequest(baseOrderInput());
+    await service.acceptOrder(order.id, courier.id);
+    await service.markPickedUp(order.id, courier.id);
+    await service.markDelivered(order.id, courier.id);
+
+    await expect(service.cancelOrder(order.id)).rejects.toBeInstanceOf(OrderAlreadyTerminalError);
   });
 });

@@ -1,14 +1,21 @@
-import { Router } from "express";
+import { Request, Router } from "express";
 import { z } from "zod";
 import {
   CourierBusyError,
   DispatchService,
+  InvalidOrderStateError,
+  NotOrderOwnerError,
   OrderAlreadyTakenError,
+  OrderAlreadyTerminalError,
   OrderNotFoundError,
 } from "../../domain/dispatch";
 import { DispatchRepository } from "../../domain/repository";
 import { asyncHandler } from "../async-handler";
 import { requireAdminKey } from "./admin";
+import { AuthedRequest, requireBusinessAuth } from "../business-auth-middleware";
+import { TokenSigner } from "../../domain/business-auth";
+import { CourierAuthedRequest, requireCourierAuth } from "../courier-auth-middleware";
+import { CourierTokenSigner } from "../../domain/courier-session";
 
 const geoPointSchema = z.object({
   lat: z.number().min(-90).max(90),
@@ -31,7 +38,7 @@ const createOrderSchema = z.object({
   paymentMode: z.enum(PAYMENT_MODES).optional(),
 });
 
-const acceptOrderSchema = z.object({
+const assignOrderSchema = z.object({
   courierId: z.string().min(1),
 });
 
@@ -47,7 +54,24 @@ const ORDER_STATUS_VALUES = [
   "UNASSIGNED",
 ] as const;
 
-export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepository): Router {
+/**
+ * Falta ADMIN_API_KEY configurada en desarrollo local: mismo criterio
+ * "sin clave, deja pasar" de `requireAdminKey` (ver `routes/admin.ts`),
+ * usado acá para rutas que aceptan TANTO la clave de admin COMO el token
+ * del negocio dueño del pedido (ej. cancelar), en vez de una sola vía.
+ */
+function passesAdminKey(req: Request): boolean {
+  const expected = process.env.ADMIN_API_KEY;
+  if (!expected) return true;
+  return req.header("x-admin-key") === expected;
+}
+
+export function createOrdersRouter(
+  dispatch: DispatchService,
+  repo: DispatchRepository,
+  tokens: TokenSigner,
+  courierTokens: CourierTokenSigner
+): Router {
   const router = Router();
 
   /**
@@ -92,11 +116,20 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
     })
   );
 
+  /**
+   * El pedido completo incluye datos del cliente final (nombre, teléfono,
+   * notas) y el valor de la mercancía — solo el negocio dueño puede
+   * verlo, no cualquiera que adivine un `orderId`.
+   */
   router.get(
     "/:orderId",
+    requireBusinessAuth(tokens),
     asyncHandler(async (req, res) => {
       const order = await dispatch.getOrderOrNull(req.params.orderId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (order.businessId !== (req as AuthedRequest).businessId) {
+        return res.status(403).json({ error: "Este pedido no pertenece a tu negocio" });
+      }
       return res.json({ order });
     })
   );
@@ -125,9 +158,13 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
    */
   router.get(
     "/:orderId/courier-contact",
+    requireBusinessAuth(tokens),
     asyncHandler(async (req, res) => {
       const order = await dispatch.getOrderOrNull(req.params.orderId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (order.businessId !== (req as AuthedRequest).businessId) {
+        return res.status(403).json({ error: "Este pedido no pertenece a tu negocio" });
+      }
       if (!order.courierId) return res.json({ courier: null });
 
       const courier = await repo.getCourier(order.courierId);
@@ -139,16 +176,18 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
     })
   );
 
+  /**
+   * `courierId` viene del token de sesión (`req.courierId`), no del body:
+   * antes cualquiera podía mandar el id de otro domiciliario y aceptar
+   * pedidos "a su nombre" sin ser esa persona.
+   */
   router.post(
     "/:orderId/accept",
+    requireCourierAuth(courierTokens),
     asyncHandler(async (req, res) => {
-      const parsed = acceptOrderSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.flatten() });
-      }
-
+      const courierId = (req as CourierAuthedRequest).courierId;
       try {
-        const order = await dispatch.acceptOrder(req.params.orderId, parsed.data.courierId);
+        const order = await dispatch.acceptOrder(req.params.orderId, courierId);
         return res.json({ order });
       } catch (err) {
         if (err instanceof OrderNotFoundError) {
@@ -167,12 +206,16 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
 
   router.post(
     "/:orderId/picked-up",
+    requireCourierAuth(courierTokens),
     asyncHandler(async (req, res) => {
+      const courierId = (req as CourierAuthedRequest).courierId;
       try {
-        const order = await dispatch.markPickedUp(req.params.orderId);
+        const order = await dispatch.markPickedUp(req.params.orderId, courierId);
         return res.json({ order });
       } catch (err) {
         if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
+        if (err instanceof NotOrderOwnerError) return res.status(403).json({ error: err.message });
+        if (err instanceof InvalidOrderStateError) return res.status(409).json({ error: err.message });
         throw err;
       }
     })
@@ -180,25 +223,50 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
 
   router.post(
     "/:orderId/delivered",
+    requireCourierAuth(courierTokens),
     asyncHandler(async (req, res) => {
+      const courierId = (req as CourierAuthedRequest).courierId;
       try {
-        const order = await dispatch.markDelivered(req.params.orderId);
+        const order = await dispatch.markDelivered(req.params.orderId, courierId);
         return res.json({ order });
       } catch (err) {
         if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
+        if (err instanceof NotOrderOwnerError) return res.status(403).json({ error: err.message });
+        if (err instanceof InvalidOrderStateError) return res.status(409).json({ error: err.message });
         throw err;
       }
     })
   );
 
+  /**
+   * Cancela tanto el negocio dueño del pedido (token de negocio) como el
+   * admin (`X-Admin-Key`) — antes cualquiera sin autenticarse podía
+   * cancelar el pedido de cualquier otro.
+   */
   router.post(
     "/:orderId/cancel",
     asyncHandler(async (req, res) => {
+      const order = await dispatch.getOrderOrNull(req.params.orderId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+
+      if (!passesAdminKey(req)) {
+        const header = req.header("authorization");
+        const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+        const payload = token ? tokens.verify(token) : null;
+        if (!payload) {
+          return res.status(401).json({ error: "Falta el token de autenticación (Authorization: Bearer <token>)" });
+        }
+        if (order.businessId !== payload.businessId) {
+          return res.status(403).json({ error: "Este pedido no pertenece a tu negocio" });
+        }
+      }
+
       try {
-        const order = await dispatch.cancelOrder(req.params.orderId);
-        return res.json({ order });
+        const cancelled = await dispatch.cancelOrder(order.id);
+        return res.json({ order: cancelled });
       } catch (err) {
         if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
+        if (err instanceof OrderAlreadyTerminalError) return res.status(409).json({ error: err.message });
         throw err;
       }
     })
@@ -233,7 +301,7 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
     "/:orderId/assign",
     requireAdminKey,
     asyncHandler(async (req, res) => {
-      const parsed = acceptOrderSchema.safeParse(req.body);
+      const parsed = assignOrderSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.flatten() });
       }

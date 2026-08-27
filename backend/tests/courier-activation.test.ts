@@ -6,9 +6,18 @@ import {
   FaceVerificationFailedError,
   InvalidActivationCredentialError,
 } from "../src/domain/courier-activation";
+import { CourierTokenSigner } from "../src/domain/courier-session";
 import { FACE_DESCRIPTOR_LENGTH } from "../src/domain/face-verification";
 import { PendingSettlementError, SettlementService } from "../src/domain/settlement";
 import { InMemoryDispatchRepository } from "../src/testing/in-memory-repository";
+
+/** Fake simple: no hace falta un JWT real para probar el dominio de activación. */
+function makeTokens(): CourierTokenSigner {
+  return {
+    sign: (courierId) => `token-${courierId}`,
+    verify: (token) => (token.startsWith("token-") ? { courierId: token.slice("token-".length) } : null),
+  };
+}
 
 function makeDescriptor(fill: number): number[] {
   return Array(FACE_DESCRIPTOR_LENGTH).fill(fill);
@@ -41,10 +50,12 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
     });
     expect(courier.isActive).toBe(false);
 
-    const service = new CourierActivationService(repo);
-    const activated = await service.activate(courier.id, courier.nationalId, MATCHING_LIVE_DESCRIPTOR);
+    const service = new CourierActivationService(repo, makeTokens());
+    const { courier: activated, token } = await service.activate(courier.id, courier.nationalId, MATCHING_LIVE_DESCRIPTOR);
 
     expect(activated.isActive).toBe(true);
+    expect(typeof token).toBe("string");
+    expect(token.length).toBeGreaterThan(0);
   });
 
   it("rechaza una cédula incorrecta sin activar al domiciliario", async () => {
@@ -54,7 +65,7 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
       phone: "+573000000003",
       nationalId: "573000000003",
     });
-    const service = new CourierActivationService(repo);
+    const service = new CourierActivationService(repo, makeTokens());
 
     await expect(
       service.activate(courier.id, "000000", MATCHING_LIVE_DESCRIPTOR)
@@ -66,7 +77,7 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
 
   it("rechaza activar un domiciliario que no existe", async () => {
     const repo = new InMemoryDispatchRepository();
-    const service = new CourierActivationService(repo);
+    const service = new CourierActivationService(repo, makeTokens());
     await expect(
       service.activate("no-existe", "123456", MATCHING_LIVE_DESCRIPTOR)
     ).rejects.toBeInstanceOf(CourierNotFoundError);
@@ -76,7 +87,7 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
     const repo = new InMemoryDispatchRepository();
     // Sin llamar a setCourierFaceReference: faceDescriptor queda null.
     const courier = await repo.createCourier({ name: "Ana", phone: "+573000000004", nationalId: "573000000004" });
-    const service = new CourierActivationService(repo);
+    const service = new CourierActivationService(repo, makeTokens());
 
     await expect(
       service.activate(courier.id, courier.nationalId, MATCHING_LIVE_DESCRIPTOR)
@@ -93,7 +104,7 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
       phone: "+573000000005",
       nationalId: "573000000005",
     });
-    const service = new CourierActivationService(repo);
+    const service = new CourierActivationService(repo, makeTokens());
 
     await expect(
       service.activate(courier.id, courier.nationalId, MISMATCHED_LIVE_DESCRIPTOR)
@@ -110,7 +121,7 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
       phone: "+573000000003",
       nationalId: "573000000003",
     });
-    const service = new CourierActivationService(repo);
+    const service = new CourierActivationService(repo, makeTokens());
 
     await service.activate(courier.id, courier.nationalId, MATCHING_LIVE_DESCRIPTOR);
     const deactivated = await service.deactivate(courier.id);
@@ -143,7 +154,7 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
     await repo.updateOrderStatus(order.id, "DELIVERED", { deliveredAt: new Date("2026-01-10T12:00:00Z") });
     await settlements.recomputeSettlement(courier.id, "2026-01-10");
 
-    const service = new CourierActivationService(repo, settlements, () => new Date("2026-01-11T09:00:00Z"));
+    const service = new CourierActivationService(repo, makeTokens(), settlements, () => new Date("2026-01-11T09:00:00Z"));
 
     await expect(
       service.activate(courier.id, courier.nationalId, MATCHING_LIVE_DESCRIPTOR)
@@ -177,8 +188,8 @@ describe("activación de domiciliarios con cédula + verificación facial", () =
     await settlements.recomputeSettlement(courier.id, "2026-01-10");
     await settlements.markPaid(courier.id, "2026-01-10");
 
-    const service = new CourierActivationService(repo, settlements, () => new Date("2026-01-11T09:00:00Z"));
-    const activated = await service.activate(courier.id, courier.nationalId, MATCHING_LIVE_DESCRIPTOR);
+    const service = new CourierActivationService(repo, makeTokens(), settlements, () => new Date("2026-01-11T09:00:00Z"));
+    const { courier: activated } = await service.activate(courier.id, courier.nationalId, MATCHING_LIVE_DESCRIPTOR);
     expect(activated.isActive).toBe(true);
   });
 });

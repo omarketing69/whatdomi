@@ -1,4 +1,5 @@
 import { isoDate } from "./date";
+import { CourierTokenSigner } from "./courier-session";
 import {
   DEFAULT_FACE_MATCH_THRESHOLD,
   euclideanDistance,
@@ -54,12 +55,24 @@ export class FaceVerificationFailedError extends Error {
 export class CourierActivationService {
   constructor(
     private readonly repo: DispatchRepository,
+    private readonly tokens: CourierTokenSigner,
     private readonly settlements: SettlementService = new SettlementService(repo),
     private readonly now: () => Date = () => new Date(),
     private readonly faceMatchThreshold: number = DEFAULT_FACE_MATCH_THRESHOLD
   ) {}
 
-  async activate(courierId: string, nationalId: string, liveFaceDescriptor: number[]): Promise<Courier> {
+  /**
+   * Este es el único momento en que se sabe con certeza quién es la
+   * persona (cédula + rostro en vivo ya verificados abajo), así que es
+   * acá donde se emite el token de sesión que las demás rutas del
+   * domiciliario van a exigir de ahí en adelante — ver
+   * `CourierTokenSigner` y `requireCourierAuth`.
+   */
+  async activate(
+    courierId: string,
+    nationalId: string,
+    liveFaceDescriptor: number[]
+  ): Promise<{ courier: Courier; token: string }> {
     const courier = await this.repo.getCourier(courierId);
     if (!courier) throw new CourierNotFoundError(courierId);
     if (courier.nationalId !== nationalId) throw new InvalidActivationCredentialError();
@@ -75,7 +88,7 @@ export class CourierActivationService {
 
     const updated = await this.repo.setCourierActive(courierId, true);
     if (!updated) throw new CourierNotFoundError(courierId);
-    return updated;
+    return { courier: updated, token: this.tokens.sign(courierId) };
   }
 
   async deactivate(courierId: string): Promise<Courier> {

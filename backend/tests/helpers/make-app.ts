@@ -4,6 +4,7 @@ import { DispatchService, DispatchServiceOptions } from "../../src/domain/dispat
 import { AddressNormalizer, GeocodeResult, GeocodingProvider, GeocodingService } from "../../src/domain/geocoding";
 import { createBcryptPasswordHasher } from "../../src/infra/password-hasher";
 import { createJwtTokenSigner } from "../../src/infra/jwt-token-signer";
+import { createCourierJwtTokenSigner } from "../../src/infra/courier-jwt-token-signer";
 import { InMemoryDispatchRepository } from "../../src/testing/in-memory-repository";
 
 export class NoopNormalizer implements AddressNormalizer {
@@ -37,9 +38,10 @@ export function makeApp(options?: {
   const dispatch = new DispatchService(repo, options?.dispatchOptions);
   const geocoding = options?.geocoding ?? new GeocodingService(new NoopNormalizer(), new NoopProvider());
   const tokens = createJwtTokenSigner(TEST_JWT_SECRET);
+  const courierTokens = createCourierJwtTokenSigner(TEST_JWT_SECRET);
   const businessAuth = new BusinessAuthService(repo, geocoding, createBcryptPasswordHasher(TEST_BCRYPT_COST), tokens);
 
-  const deps: CreateAppDeps = { repo, dispatch, businessAuth, tokens, geocoding };
+  const deps: CreateAppDeps = { repo, dispatch, businessAuth, tokens, courierTokens, geocoding };
   const app = createApp(deps);
-  return { repo, dispatch, geocoding, tokens, businessAuth, app };
+  return { repo, dispatch, geocoding, tokens, courierTokens, businessAuth, app };
 }
