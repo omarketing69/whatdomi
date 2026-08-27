@@ -13,6 +13,19 @@
   box-sizing: border-box;
 }
 
+/*
+ * Sin esto, reglas como `form { display: flex }` más abajo pisan el
+ * comportamiento por defecto de `[hidden]` (que solo viene de la hoja de
+ * estilos del navegador, así que cualquier regla de autor con la misma
+ * especificidad la gana): un <form hidden> quedaba visible igual, con
+ * `display: flex`. Pasaba en el login (#register-form) y en el dashboard
+ * (#quote-form) — ambas aparecían abiertas de una, en vez de ocultas
+ * hasta que el usuario cambia de pestaña o hace clic en "Pedir domiciliario".
+ */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
