@@ -13,10 +13,17 @@ le ofrece automáticamente al siguiente más cercano, y así sucesivamente
 (ver "Cascada de asignación" más abajo). El negocio recibe entonces el
 nombre, la placa y el teléfono del domiciliario asignado. Si nadie acepta
 a tiempo, el pedido queda para que un admin lo asigne a mano, como último
-recurso. También existe un formulario web directo como alternativa a
-WhatsApp — con un **mapa en vivo** de domiciliarios cercanos y, una vez
-asignado, del trayecto del domiciliario hacia la recogida — y un panel de
-administración con configuración de tarifas, liquidaciones, y monitoreo.
+recurso. Para activarse cada día, el domiciliario necesita su cédula **y**
+una verificación facial en vivo contra un rostro de referencia que
+registró una sola vez (ver "Verificación facial del domiciliario" más
+abajo). Una vez recoge el pedido, el cierre del servicio se intenta
+automático por geocerca al llegar al punto de entrega, con un botón
+manual como respaldo siempre disponible. También existe un formulario web
+directo como alternativa a WhatsApp — con un **mapa en vivo** de
+domiciliarios cercanos y, una vez asignado, del trayecto del domiciliario
+en cada tramo del viaje (hacia la recogida, y luego hacia la entrega) — y
+un panel de administración con configuración de tarifas, liquidaciones, y
+monitoreo.
 
 Para el diseño técnico completo (diagrama, decisiones de stack, cómo se
 resuelve la condición de carrera de la asignación, por qué la
@@ -45,8 +52,10 @@ whatdomi/
 ├── frontend/
 │   ├── index.html       Formulario web directo (alternativa a WhatsApp) + mapa en vivo
 │   ├── admin.html        Tablero de administración (monitoreo + reasignar/cancelar/asignar)
-│   ├── courier/           PWA del domiciliario (activación, ubicación, ofertas)
-│   └── vendor/leaflet/    Leaflet vendorizado localmente (no un CDN) para el mapa
+│   ├── courier/           PWA del domiciliario (activación, ubicación, ofertas, captura facial)
+│   └── vendor/
+│       ├── leaflet/       Leaflet vendorizado localmente (no un CDN) para el mapa
+│       └── face-api/      face-api.js + modelos vendorizados localmente para la verificación facial
 ├── docs/                Documentación de arquitectura
 └── docker-compose.yml    Postgres + PostGIS para desarrollo local
 ```
@@ -79,7 +88,8 @@ npm run dev             # http://localhost:3000
 ```
 
 Correr las pruebas (lógica de asignación, flujo conversacional de
-WhatsApp, geocodificación, tarifa y activación de domiciliarios):
+WhatsApp, geocodificación, tarifa, activación de domiciliarios,
+verificación facial y cierre automático del servicio por geocerca):
 
 ```bash
 npm test
@@ -100,8 +110,9 @@ npx serve .              # o: python3 -m http.server 5173
   liquidaciones y registro de servicios por día, estadísticas, y monitoreo
   de pedidos en vivo (reasignar/cancelar). Pide la `X-Admin-Key` si el
   backend la exige.
-- `courier/index.html` — PWA del domiciliario (registro, activación por
-  código, ubicación en vivo, recibir y aceptar ofertas).
+- `courier/index.html` — PWA del domiciliario (registro, captura del
+  rostro de referencia, activación con cédula + verificación facial,
+  ubicación en vivo, recibir/aceptar ofertas, marcar recogido/entregado).
 
 Si tu backend no corre en `http://localhost:3000`, ajusta
 `window.WHATDOMI_API_URL` en el `<script>` de cada página.
@@ -140,9 +151,19 @@ curl -X POST http://localhost:3000/api/couriers \
   -H "Content-Type: application/json" \
   -d '{"name":"Carlos","phone":"+573000000002","nationalId":"1020304050"}'
 
-# 3. El domiciliario se activa con su cédula y reporta ubicación
+# 3a. Registra su rostro de referencia una sola vez (en la PWA real, el
+#     descriptor de 128 números lo calcula face-api.js en el navegador a
+#     partir de la cámara; aquí se manda un arreglo de ejemplo a mano)
+curl -X POST http://localhost:3000/api/couriers/<courierId>/face-reference \
+  -H "Content-Type: application/json" \
+  -d '{"descriptor":[0.1, 0.2, ...128 números en total...], "consent": true}'
+
+# 3b. Se activa con su cédula + una selfie en vivo (el descriptor debe
+#     coincidir con el de referencia dentro del umbral, ver más abajo) y
+#     reporta ubicación
 curl -X POST http://localhost:3000/api/couriers/<courierId>/activate \
-  -H "Content-Type: application/json" -d '{"nationalId":"1020304050"}'
+  -H "Content-Type: application/json" \
+  -d '{"nationalId":"1020304050", "faceDescriptor":[0.1, 0.2, ...128 números...]}'
 curl -X POST http://localhost:3000/api/couriers/<courierId>/location \
   -H "Content-Type: application/json" -d '{"lat":4.6533,"lng":-74.0836}'
 
@@ -180,6 +201,13 @@ calculada pero todavía no se buscó domiciliario, a la espera de que el
 solicitante responda *SI*. El formulario web directo (`POST /api/orders`)
 se salta ese paso y arranca directo en `SEARCHING`.
 
+El tramo `IN_PROGRESS ──▶ DELIVERED` se cierra de dos formas posibles: **automático por geocerca**
+(cada reporte de ubicación del domiciliario revisa si ya está a menos de
+`DELIVERY_GEOFENCE_METERS` del punto de entrega, y si es así lo marca
+`DELIVERED` solo) o con el **botón manual "Entregado"** en su PWA, que
+siempre funciona como respaldo. Cualquiera de los dos dispara el aviso de
+entrega al negocio por WhatsApp y recalcula la liquidación del día.
+
 ## Cascada de asignación (timeout + reintento)
 
 Al pasar a `SEARCHING`, el pedido no se ofrece a todos los candidatos a la
@@ -213,9 +241,12 @@ cuanto el negocio completa el punto de recogida:
 
 - **Antes de asignar**: puntos verdes con los domiciliarios activos cerca
   de la recogida (`GET /api/couriers/nearby`), actualizados cada ~4s.
-- **Después de asignar**: un punto rojo con la posición del domiciliario
-  asignado y una línea hacia el punto de recogida, también actualizada
-  cada ~4s (`GET /api/orders/:id/courier-location`).
+- **Asignado, yendo a recogida** (`ASSIGNED`): un punto rojo con la
+  posición del domiciliario y una línea hacia el punto de recogida,
+  también actualizada cada ~4s (`GET /api/orders/:id/courier-location`).
+- **Recogido, yendo a entrega** (`IN_PROGRESS`): la línea cambia de
+  destino — ahora apunta al punto de **entrega**, con el mismo mecanismo
+  de ubicación en vivo; es el segundo tramo del viaje.
 
 **Limitación deliberada**: la línea es la distancia en línea recta, no una
 ruta real por calles — no hay integración con un servicio de ruteo en este
@@ -228,8 +259,9 @@ funcionalidad, incluida la validación en navegador con Playwright).
 |--------|------|-------------|
 | POST | `/api/businesses` | Registrar un negocio |
 | POST | `/api/couriers` | Registrar un domiciliario (nombre, WhatsApp, `nationalId`/cédula, placa) |
-| POST | `/api/couriers/:id/activate` | Activarse con la cédula (`402` si tiene comisión pendiente de días anteriores) |
-| POST | `/api/couriers/:id/deactivate` | Desactivarse (sin necesitar la cédula) |
+| POST | `/api/couriers/:id/face-reference` | Registrar/reemplazar el rostro de referencia (`{"descriptor":[128 números],"consent":true}`, `400` sin consentimiento) |
+| POST | `/api/couriers/:id/activate` | Activarse con la cédula + un descriptor facial en vivo (`{"nationalId","faceDescriptor":[128 números]}`; `428` si no registró rostro, `403` si no coincide, `402` si tiene comisión pendiente de días anteriores) |
+| POST | `/api/couriers/:id/deactivate` | Desactivarse (sin necesitar la cédula ni el rostro) |
 | POST | `/api/couriers/:id/location` | Reportar ubicación en vivo |
 | GET | `/api/couriers/nearby?lat=&lng=&radiusMeters=` | Domiciliarios activos cerca de un punto (para el mapa; sin teléfono ni cédula) |
 | POST | `/api/orders` | Crear una solicitud de domicilio directa (arranca la cascada de asignación) |
@@ -237,8 +269,8 @@ funcionalidad, incluida la validación en navegador con Playwright).
 | GET | `/api/orders/:id` | Consultar estado de un pedido |
 | GET | `/api/orders/:id/courier-location` | Ubicación en vivo del domiciliario ya asignado a este pedido (para el mapa; `{"location":null}` si aún no hay ninguno) |
 | POST | `/api/orders/:id/accept` | El domiciliario al que le toca el turno acepta el pedido (`409` si no es su turno o ya no está disponible) |
-| POST | `/api/orders/:id/picked-up` | Marcar como recogido / en curso |
-| POST | `/api/orders/:id/delivered` | Marcar como entregado |
+| POST | `/api/orders/:id/picked-up` | Marcar como recogido / en curso (arranca el segundo tramo del mapa y la geocerca de entrega) |
+| POST | `/api/orders/:id/delivered` | Marcar como entregado a mano (respaldo del cierre automático por geocerca) |
 | POST | `/api/orders/:id/cancel` | Cancelar el pedido |
 | POST | `/api/orders/:id/reassign` | Fallback del admin: libera la asignación actual y reintenta la cascada completa desde cero |
 | POST | `/api/orders/:id/assign` | Última instancia del admin: asigna a mano un pedido `UNASSIGNED` con `{"courierId": "..."}` |
@@ -300,6 +332,38 @@ de días ya cerrados. Ver `backend/src/domain/settlement.ts`
 (`SettlementService`) y sus tests
 (`backend/tests/settlement.test.ts`) para el detalle de esta regla.
 
+## Verificación facial del domiciliario
+
+Para activarse cada día, el domiciliario necesita **tres cosas**: su
+cédula, una verificación facial en vivo, y no tener comisión pendiente de
+un día anterior.
+
+1. **Una sola vez**, registra un rostro de referencia desde su PWA
+   (`POST /api/couriers/:id/face-reference`): la cámara captura una selfie,
+   y **en el propio navegador** (`face-api.js`, vendorizado localmente en
+   `frontend/vendor/face-api/`) se calcula un descriptor de 128 números —
+   la foto en sí **nunca se envía al backend**, solo ese descriptor.
+   Requiere marcar una casilla de consentimiento explícito antes de
+   capturar.
+2. **Cada activación**, captura una selfie nueva y su descriptor se compara
+   contra el de referencia — pero la comparación (distancia euclidiana
+   contra un umbral, `FACE_MATCH_THRESHOLD`) la hace el **backend**, no el
+   navegador: el servidor nunca confía en que el cliente le diga
+   "coincide" sin verificarlo él mismo.
+
+**Limitación conocida**: no hay detección de vida (*liveness*) — el
+sistema verifica que el rostro coincida con la referencia, no que haya una
+persona real frente a la cámara en ese momento. Ver
+`docs/ARCHITECTURE.md` §10 para el detalle y la recomendación para
+producción.
+
+**Nota legal**: un descriptor facial es un dato biométrico, tratado como
+sensible bajo el marco de *habeas data* en buena parte de LatAm (ej. la
+Ley 1581 de 2012 en Colombia). Este MVP solo implementa el consentimiento
+explícito al capturar (casilla + fecha/hora registrada) — antes de operar
+en producción, revisa la normativa de protección de datos biométricos de
+cada país con asesoría legal local.
+
 ## Fuera de alcance en este MVP
 
 - **Pagos**: no hay pasarela integrada; se maneja manual/offline entre
@@ -311,12 +375,18 @@ de días ya cerrados. Ver `backend/src/domain/settlement.ts`
   oficial) se identifican sin un mecanismo de autenticación fuerte —
   suficiente para el MVP, no para producción a gran escala (ver
   `docs/ARCHITECTURE.md` §7).
+- **Liveness/anti-spoofing en la verificación facial**: ver la sección de
+  arriba y `docs/ARCHITECTURE.md` §10.
+- **Ruteo real en el mapa**: la línea de cada tramo del trayecto es
+  distancia en línea recta, no una ruta real por calles.
 
 ## Variables de entorno
 
 Ver [`.env.example`](.env.example) para la lista completa comentada
 (Postgres, radio de búsqueda, semilla inicial de tarifa/comisión,
-`ADMIN_API_KEY`, geocodificación, credenciales de WhatsApp Business). Nunca
+`ADMIN_API_KEY`, geocodificación, credenciales de WhatsApp Business,
+`FACE_MATCH_THRESHOLD` para la verificación facial, y
+`DELIVERY_GEOFENCE_METERS` para el cierre automático del servicio). Nunca
 subas un `.env` real con secretos: el `.gitignore` ya lo excluye.
 
 ## Estado del WhatsApp Business

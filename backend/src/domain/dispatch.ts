@@ -1,12 +1,15 @@
 import { isoDate } from "./date";
+import { haversineDistanceMeters } from "./geo";
 import { DispatchRepository } from "./repository";
 import { SettlementService } from "./settlement";
-import { CourierWithDistance, CreateOrderInput, Order, OrderStatus } from "./types";
+import { Courier, CourierWithDistance, CreateOrderInput, GeoPoint, Order, OrderStatus } from "./types";
 
 export const DEFAULT_SEARCH_RADIUS_METERS = 5_000;
 export const DEFAULT_MAX_CANDIDATES = 5;
 /** Ventana que tiene cada domiciliario candidato para aceptar antes de pasar al siguiente más cercano. */
 export const DEFAULT_OFFER_TIMEOUT_MS = 60_000;
+/** Radio (metros) alrededor del punto de entrega dentro del cual se considera que el domiciliario "llegó". */
+export const DEFAULT_DELIVERY_GEOFENCE_METERS = 100;
 
 /**
  * Notifica eventos de despacho hacia el mundo exterior (sockets, WhatsApp,
@@ -92,6 +95,8 @@ export interface DispatchServiceOptions {
   /** Opcional: si no se da, `markDelivered` simplemente no recalcula ninguna liquidación. */
   settlements?: SettlementService;
   offerTimeoutMs?: number;
+  /** Radio (metros) de la geocerca de entrega, ver `DEFAULT_DELIVERY_GEOFENCE_METERS`. */
+  deliveryGeofenceMeters?: number;
 }
 
 /** Estado en memoria de la cascada de un pedido en curso (ver §4 de docs/ARCHITECTURE.md). */
@@ -107,6 +112,7 @@ export class DispatchService {
   private readonly maxCandidates: number;
   private readonly settlements?: SettlementService;
   private readonly offerTimeoutMs: number;
+  private readonly deliveryGeofenceMeters: number;
 
   /**
    * Cascadas de asignación activas, en memoria, por `orderId`. Se pierden
@@ -123,6 +129,7 @@ export class DispatchService {
     this.maxCandidates = options.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
     this.settlements = options.settlements;
     this.offerTimeoutMs = options.offerTimeoutMs ?? DEFAULT_OFFER_TIMEOUT_MS;
+    this.deliveryGeofenceMeters = options.deliveryGeofenceMeters ?? DEFAULT_DELIVERY_GEOFENCE_METERS;
   }
 
   /**
@@ -193,6 +200,42 @@ export class DispatchService {
     if (!courier || courier.lat === null || courier.lng === null) return null;
 
     return { lat: courier.lat, lng: courier.lng, lastSeenAt: courier.lastSeenAt };
+  }
+
+  /**
+   * Reporta la ubicación en vivo del domiciliario (llamado periódicamente
+   * desde su PWA) y, de paso, intenta el cierre automático por geocerca:
+   * si tiene un pedido en curso (`IN_PROGRESS`, es decir ya recogido y en
+   * camino) y esta posición cae dentro de `deliveryGeofenceMeters` del
+   * punto de entrega, se marca `DELIVERED` sin esperar a que el
+   * domiciliario presione el botón manual.
+   *
+   * Es deliberadamente best-effort: un fallo en el chequeo de geocerca
+   * (o no tener ningún pedido en curso) nunca debe impedir que la
+   * ubicación se guarde, que es lo que también alimenta el mapa en vivo
+   * del negocio.
+   */
+  async reportCourierLocation(courierId: string, point: GeoPoint): Promise<Courier | null> {
+    const courier = await this.repo.upsertCourierLocation(courierId, point);
+    if (!courier) return null;
+
+    try {
+      await this.tryAutoCompleteByGeofence(courierId, point);
+    } catch (err) {
+      console.error(`[dispatch] error en el cierre automático por geocerca del domiciliario ${courierId}`, err);
+    }
+
+    return courier;
+  }
+
+  private async tryAutoCompleteByGeofence(courierId: string, point: GeoPoint): Promise<void> {
+    const order = await this.repo.findInProgressOrderForCourier(courierId);
+    if (!order) return;
+
+    const distanceToDropoff = haversineDistanceMeters(point, order.dropoff);
+    if (distanceToDropoff > this.deliveryGeofenceMeters) return;
+
+    await this.markDelivered(order.id);
   }
 
   /**

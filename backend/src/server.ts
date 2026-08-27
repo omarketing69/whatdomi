@@ -18,6 +18,7 @@ const PORT = Number(process.env.PORT ?? 3000);
 const SEARCH_RADIUS_METERS = Number(process.env.SEARCH_RADIUS_METERS ?? 5_000);
 const MAX_CANDIDATES = Number(process.env.MAX_CANDIDATES ?? 5);
 const OFFER_TIMEOUT_MS = Number(process.env.OFFER_TIMEOUT_MS ?? 60_000);
+const DELIVERY_GEOFENCE_METERS = Number(process.env.DELIVERY_GEOFENCE_METERS ?? 100);
 
 const repo = new PostgresDispatchRepository(getPool());
 const settlements = new SettlementService(repo);
@@ -37,6 +38,7 @@ const dispatch = new DispatchService(repo, {
   maxCandidates: MAX_CANDIDATES,
   settlements,
   offerTimeoutMs: OFFER_TIMEOUT_MS,
+  deliveryGeofenceMeters: DELIVERY_GEOFENCE_METERS,
 });
 
 // Si hay ANTHROPIC_API_KEY, se usa un LLM para interpretar direcciones

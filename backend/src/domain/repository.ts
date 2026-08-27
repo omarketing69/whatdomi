@@ -40,6 +40,16 @@ export interface DispatchRepository {
 
   getOrder(orderId: string): Promise<Order | null>;
 
+  /**
+   * Pedido `IN_PROGRESS` (ya recogido, en camino al punto de entrega)
+   * asignado a este domiciliario, si tiene alguno — usado por
+   * `DispatchService.reportCourierLocation` para el cierre automático por
+   * geocerca. El modelo asume como mucho un pedido en curso a la vez por
+   * domiciliario; si hubiera más de uno, cualquier implementación puede
+   * devolver el más reciente sin que eso sea una garantía del contrato.
+   */
+  findInProgressOrderForCourier(courierId: string): Promise<Order | null>;
+
   /** Para el tablero de administración (solo monitoreo, no asigna nada). */
   listOrders(filter?: { statuses?: OrderStatus[]; limit?: number }): Promise<Order[]>;
 
@@ -100,6 +110,19 @@ export interface DispatchRepository {
   setCourierActive(courierId: string, isActive: boolean): Promise<Courier | null>;
 
   getCourier(courierId: string): Promise<Courier | null>;
+
+  /**
+   * Guarda el descriptor facial de referencia del domiciliario (capturado
+   * client-side por `face-api.js` a partir de su selfie) junto con la
+   * marca de tiempo de su consentimiento explícito. Sobrescribe cualquier
+   * referencia anterior — el domiciliario puede volver a capturarse si,
+   * por ejemplo, la primera captura quedó mal.
+   */
+  setCourierFaceReference(
+    courierId: string,
+    descriptor: number[],
+    consentGivenAt: Date
+  ): Promise<Courier | null>;
 
   /** Configuración de tarifas/comisión de la plataforma (singleton, editable por el admin). */
   getPlatformConfig(): Promise<PlatformConfig>;

@@ -29,6 +29,20 @@
         background: #f1e6e6;
         color: #b3261e;
       }
+      video {
+        width: 100%;
+        max-width: 320px;
+        border-radius: 10px;
+        background: #000;
+        display: block;
+      }
+      .consent-check {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        font-size: 0.9rem;
+        margin: 0.5rem 0;
+      }
     </style>
   </head>
   <body>
@@ -50,13 +64,39 @@
         <p id="register-status" class="status"></p>
       </section>
 
+      <section id="face-register-section" hidden>
+        <h2>2. Registra tu rostro</h2>
+        <p class="hint">
+          Esto queda guardado como tu rostro de referencia: cada día, para activarte, te vamos a pedir una
+          selfie en vivo y la comparamos contra esta. Nunca guardamos la foto, solo un número que la
+          representa (no se puede usar para reconstruir tu imagen).
+        </p>
+        <label class="consent-check">
+          <input type="checkbox" id="face-register-consent" />
+          Acepto que se capture y procese mi rostro para verificar mi identidad al activarme cada día.
+        </label>
+        <video id="face-register-video" autoplay playsinline muted></video>
+        <div class="row-actions" style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+          <button type="button" id="face-register-start-btn">Encender cámara</button>
+          <button type="button" id="face-register-capture-btn" disabled>Capturar rostro</button>
+        </div>
+        <p id="face-register-status" class="status"></p>
+      </section>
+
       <section id="activation-section" hidden>
-        <h2>2. Activarme</h2>
+        <h2>3. Activarme</h2>
         <p class="hint">Usa el mismo número de cédula con el que te registraste; queda guardado en este navegador/dispositivo.</p>
+        <p class="hint">Además necesitamos verificar tu rostro contra el que registraste: enciende la cámara y captúralo antes de activarte.</p>
+        <video id="face-activate-video" autoplay playsinline muted></video>
+        <div class="row-actions" style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+          <button type="button" id="face-activate-start-btn">Encender cámara</button>
+          <button type="button" id="face-activate-capture-btn" disabled>Verificar rostro</button>
+        </div>
+        <p id="face-activate-status" class="status"></p>
         <form id="activation-form">
           <label>ID de domiciliario<input type="text" name="courierId" required /></label>
           <label>Número de cédula<input type="text" name="nationalId" required inputmode="numeric" /></label>
-          <button type="submit">Activarme</button>
+          <button type="submit" id="activate-submit-btn" disabled>Activarme</button>
         </form>
         <p><span id="status-pill" class="pill offline">Desconectado</span></p>
         <button type="button" id="deactivate-btn" hidden>Desactivarme</button>
@@ -73,6 +113,9 @@
     <script>
       window.WHATDOMI_API_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
     </script>
+    <!-- Vendorizado localmente (no CDN), mismo motivo que Leaflet: ver docs/ARCHITECTURE.md §10. -->
+    <script src="../vendor/face-api/face-api.min.js"></script>
+    <script src="face.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

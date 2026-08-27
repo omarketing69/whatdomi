@@ -52,6 +52,8 @@ type CourierRow = {
   vehicle_plate: string | null;
   is_active: boolean;
   national_id: string;
+  face_descriptor: number[] | string | null;
+  face_consent_given_at: Date | null;
   lat: number | null;
   lng: number | null;
   last_seen_at: Date | null;
@@ -168,6 +170,13 @@ function mapCourier(row: CourierRow): Courier {
     vehiclePlate: row.vehicle_plate,
     isActive: row.is_active,
     nationalId: row.national_id,
+    faceDescriptor:
+      row.face_descriptor === null
+        ? null
+        : typeof row.face_descriptor === "string"
+          ? JSON.parse(row.face_descriptor)
+          : row.face_descriptor,
+    faceConsentGivenAt: row.face_consent_given_at,
     lat: row.lat,
     lng: row.lng,
     lastSeenAt: row.last_seen_at,
@@ -253,6 +262,17 @@ export class PostgresDispatchRepository implements DispatchRepository {
     const { rows } = await this.pool.query<OrderRow>(`SELECT * FROM orders WHERE id = $1`, [
       orderId,
     ]);
+    return rows[0] ? mapOrder(rows[0]) : null;
+  }
+
+  async findInProgressOrderForCourier(courierId: string): Promise<Order | null> {
+    const { rows } = await this.pool.query<OrderRow>(
+      `SELECT * FROM orders
+       WHERE courier_id = $1 AND status = 'IN_PROGRESS'
+       ORDER BY assigned_at DESC NULLS LAST
+       LIMIT 1`,
+      [courierId]
+    );
     return rows[0] ? mapOrder(rows[0]) : null;
   }
 
@@ -365,6 +385,21 @@ export class PostgresDispatchRepository implements DispatchRepository {
     const { rows } = await this.pool.query<CourierRow>(`SELECT * FROM couriers WHERE id = $1`, [
       courierId,
     ]);
+    return rows[0] ? mapCourier(rows[0]) : null;
+  }
+
+  async setCourierFaceReference(
+    courierId: string,
+    descriptor: number[],
+    consentGivenAt: Date
+  ): Promise<Courier | null> {
+    const { rows } = await this.pool.query<CourierRow>(
+      `UPDATE couriers
+       SET face_descriptor = $2::jsonb, face_consent_given_at = $3
+       WHERE id = $1
+       RETURNING *`,
+      [courierId, JSON.stringify(descriptor), consentGivenAt]
+    );
     return rows[0] ? mapCourier(rows[0]) : null;
   }
 

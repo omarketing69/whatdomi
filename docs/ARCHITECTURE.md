@@ -67,9 +67,14 @@ Flujo completo de un pedido (WhatsApp, el canal principal):
 6. Al asignarse (automática o manualmente): el **domiciliario** recibe por
    WhatsApp los datos del servicio (recogida, entrega, tarifa); el
    **negocio** recibe nombre, placa y teléfono del domiciliario.
-7. El domiciliario recoge (`IN_PROGRESS`) y entrega (`DELIVERED`) el
-   pedido desde su PWA. Al entregar, se recalcula su liquidación de
-   comisión del día (ver §7-8).
+7. El domiciliario recoge (`IN_PROGRESS`) el pedido desde su PWA y avanza
+   hacia el punto de entrega. El cierre se intenta primero **automático
+   por geocerca** (si su ubicación en vivo cae dentro de un radio
+   configurable del destino, `DELIVERY_GEOFENCE_METERS`) y siempre tiene
+   como respaldo el botón manual "Entregado" en su PWA — cualquiera de los
+   dos marca el pedido `DELIVERED`, avisa por WhatsApp al negocio, y
+   recalcula la liquidación de comisión del día del domiciliario (ver
+   §7-8).
 8. En paralelo, el **admin** ve todo esto en vivo desde su panel (polling
    corto sobre la misma API): pedidos en curso (solo monitoreo, con
    reasignar/asignar/cancelar como fallback operativo), tarifa/comisión
@@ -94,14 +99,16 @@ comentario ahí para el detalle):
   dinero de la plataforma (tarifas, comisión, cuánto le debe cada
   domiciliario), así que necesita algo más que "no hay verificación" —
   pero un login completo (usuario/contraseña, sesiones) es más de lo que
-  un MVP de un solo operador necesita. Ver §12 para cómo evolucionar esto.
+  un MVP de un solo operador necesita. Ver §13 para cómo evolucionar esto.
 - **Business** (negocio): quien solicita domicilios. Nombre, teléfono,
   dirección. Por WhatsApp se crea automáticamente la primera vez que un
   número escribe (no hay registro previo ni verificación de identidad).
 - **Courier** (domiciliario): quien los entrega. Nombre, teléfono/WhatsApp,
   placa, `isActive`, `nationalId` (cédula: identificador único y también
-  la credencial con la que se activa desde su PWA, ver §7), ubicación en
-  vivo (`lat`/`lng`), `lastSeenAt`.
+  la credencial con la que se activa desde su PWA, ver §7), un descriptor
+  facial de referencia (`faceDescriptor`, requerido para activarse junto
+  con la cédula, ver §10) y la marca de su consentimiento
+  (`faceConsentGivenAt`), ubicación en vivo (`lat`/`lng`), `lastSeenAt`.
 
 Business y Courier se modelan como **entidades separadas**, no como filas
 de una tabla `users` con un campo `role`: sus datos y ciclo de vida no se
@@ -122,7 +129,7 @@ monetización (ver §6-7):
 - **Order** (pedido/solicitud de domicilio): negocio, nombre del
   solicitante, punto de recogida, punto de entrega, distancia, tarifa,
   moneda, `status`, domiciliario asignado, y `paymentLink`/`paymentStatus`
-  (sin usar todavía, ver §11).
+  (sin usar todavía, ver §12).
 
 Ciclo de vida de un pedido (`OrderStatus`):
 
@@ -153,9 +160,10 @@ búsqueda/notificación de candidatos vía `searchAndOffer`).
 | Acceso a datos     | `pg` (node-postgres) con SQL crudo        | Se evitó un ORM (ej. Prisma) para no depender de la descarga de binarios de motor en tiempo de build/CI, que puede fallar en entornos con red restringida. El dominio está detrás de una interfaz (`DispatchRepository`), así que cambiar a un ORM más adelante es un cambio localizado. |
 | Tiempo real        | Socket.io                                 | Notificar domiciliarios candidatos y actualizar el estado del pedido sin polling agresivo. El tablero admin sí usa polling HTTP corto, por simplicidad — no necesita la latencia de un socket para una vista de monitoreo. |
 | Geocodificación    | LLM (normaliza texto) + Nominatim/OSM (resuelve coordenadas) | Ver §5: separar "entender la dirección informal" de "resolver coordenadas reales" en dos pasos, en vez de pedirle coordenadas a un LLM directamente. |
-| WhatsApp           | Flujo conversacional propio sobre un webhook compatible con Meta Cloud API (ver §10) | Sin credenciales reales todavía, pero toda la lógica de negocio (estado de la conversación, cotización, confirmación) ya está implementada y probada; solo falta conectar el envío/recepción real. |
+| WhatsApp           | Flujo conversacional propio sobre un webhook compatible con Meta Cloud API (ver §11) | Sin credenciales reales todavía, pero toda la lógica de negocio (estado de la conversación, cotización, confirmación) ya está implementada y probada; solo falta conectar el envío/recepción real. |
 | Frontend           | HTML/CSS/JS plano, sin build              | Tres páginas simples (formulario de negocio, tablero admin, PWA de domiciliario) no justifican un framework ni un paso de build. |
 | Mapa               | Leaflet + tiles de OpenStreetMap, vendorizados localmente (ver §9) | Gratis y sin API key, misma lógica que ya llevó a elegir Nominatim para geocodificar; vendorizado (no CDN) para no depender de un tercero externo en cada carga. |
+| Verificación facial | face-api.js, vendorizado localmente (ver §10) | Librería gratuita, de código abierto, que corre 100% en el navegador (WebGL/CPU, sin servidor de inferencia); vendorizada por el mismo motivo que Leaflet: no depender de un tercero externo en cada carga. |
 | PWA del domiciliario | Web App Manifest + Service Worker mínimo | El mercado objetivo son ciudades pequeñas con celulares de gama baja: una PWA instalable evita la fricción (y el costo de distribución) de una app nativa. |
 | Tests              | Vitest sobre un repositorio en memoria    | La lógica de asignación, el flujo conversacional y la geocodificación se prueban sin depender de una base de datos ni de red real. |
 
@@ -209,7 +217,7 @@ el pedido siga en `SEARCHING`. Es una comprobación en memoria, no en la
 base de datos: si el proceso se reinicia y la cascada en memoria se
 pierde, `acceptOrder` se degrada al comportamiento atómico simple (gana
 quien primero llegue), en vez de dejar el pedido inaceptable para
-siempre — ver §12 sobre qué le falta a esto para un despliegue con más de
+siempre — ver §13 sobre qué le falta a esto para un despliegue con más de
 una instancia.
 
 Esta misma lógica de asignación atómica se implementó en el repositorio en
@@ -301,10 +309,12 @@ El domiciliario se registra una sola vez (`POST /api/couriers`) con su
 nombre, su número de WhatsApp, su placa, y su **número de cédula**
 (`nationalId`) — no hay un código de activación generado aparte: la
 cédula misma es la credencial. Para "prender" su sesión y empezar a
-recibir pedidos, la usa en su PWA (`POST /api/couriers/:id/activate`); a
-partir de ahí reporta su ubicación en vivo y queda visible para la
-búsqueda de candidatos. Desactivarse (`POST /api/couriers/:id/deactivate`)
-no requiere la cédula — es una acción sobre la propia sesión.
+recibir pedidos, la usa en su PWA junto con una verificación facial en
+vivo (`POST /api/couriers/:id/activate`, ver §10 para el detalle de esa
+verificación); a partir de ahí reporta su ubicación en vivo y queda
+visible para la búsqueda de candidatos. Desactivarse
+(`POST /api/couriers/:id/deactivate`) no requiere ni la cédula ni el
+rostro — es una acción sobre la propia sesión.
 
 Esto **no** es un mecanismo de autenticación fuerte (la cédula no se
 verifica contra ninguna fuente oficial, no está hasheada en la base de
@@ -379,12 +389,41 @@ capacidades, todas detrás de `requireAdminKey`:
 
 `frontend/index.html` muestra un mapa en cuanto el negocio completa el
 punto de recogida: domiciliarios activos cerca (puntos verdes,
-`GET /api/couriers/nearby`) antes de asignar, y la posición del
-domiciliario asignado con una línea hacia la recogida
-(`GET /api/orders/:id/courier-location`) después — ambos con polling cada
-~4s, no WebSocket, porque es una vista de solo lectura de baja frecuencia
-donde el polling ya es simple y suficiente (el mismo patrón que usa el
-tablero de admin).
+`GET /api/couriers/nearby`) antes de asignar, y después la posición del
+domiciliario asignado con una línea de trayecto
+(`GET /api/orders/:id/courier-location`) — ambos con polling cada ~4s, no
+WebSocket, porque es una vista de solo lectura de baja frecuencia donde el
+polling ya es simple y suficiente (el mismo patrón que usa el tablero de
+admin).
+
+**El trayecto en vivo tiene dos tramos**, y el mapa cambia el destino
+visual de la línea según el estado del pedido:
+
+1. **`ASSIGNED`** (domiciliario → recogida): la línea apunta al punto de
+   recogida, igual que antes de que existiera el segundo tramo.
+2. **`IN_PROGRESS`** (recogida → entrega, una vez el domiciliario marcó
+   que recogió el pedido): la línea cambia de destino al punto de
+   **entrega**, y aparece un marcador nuevo ahí. Es el mismo mecanismo de
+   ubicación en vivo (`courier-location`) que ya se usaba para el primer
+   tramo — lo único que cambia es cuál punto se usa como destino visual
+   (`frontend/app.js`, variable `currentOrderStatus`).
+
+**Cierre del servicio por geocerca**: mientras el pedido está
+`IN_PROGRESS`, cada reporte de ubicación del domiciliario
+(`POST /api/couriers/:id/location`, cada ~15s desde su PWA) también
+revisa, del lado del servidor (`DispatchService.reportCourierLocation`),
+si esa posición cayó dentro de `DELIVERY_GEOFENCE_METERS` (100m por
+defecto, configurable) del punto de entrega — si es así, el pedido se
+marca `DELIVERED` automáticamente, sin que el domiciliario tenga que
+hacer nada. Es deliberadamente **best-effort**: un GPS impreciso o un
+reporte de ubicación perdido no deben dejar un pedido atascado, así que
+el botón manual "Entregado" en la PWA del domiciliario sigue funcionando
+siempre como respaldo (y es el único camino si el cierre automático no
+aplicara, ej. el domicilio se entrega en la puerta de al lado y nunca
+cae dentro del radio configurado). Cualquiera de los dos caminos termina
+en el mismo `DispatchService.markDelivered` — recalcula la liquidación
+del domiciliario y dispara el aviso de entrega por WhatsApp al negocio
+(`whatsapp/notifier.ts`, `onOrderStatusChanged`).
 
 **Por qué Leaflet + OpenStreetMap y no Google Maps/Mapbox**: el público
 son ciudades pequeñas de LatAm, donde cuidar el costo operativo es una
@@ -413,9 +452,10 @@ de verificar si Leaflet había cargado. Se corrigió en dos frentes:
    estado) sigue funcionando exactamente igual. El mapa es una mejora de
    experiencia, nunca una dependencia del flujo de negocio.
 
-**Limitación deliberada**: la línea hacia la recogida es la distancia en
-**línea recta** (Haversine, la misma que ya se usa para tarifa y
-cercanía), no una ruta real por calles — no hay integración con un
+**Limitación deliberada**: la línea de cada tramo (hacia la recogida o
+hacia la entrega) es la distancia en **línea recta** (Haversine, la misma
+que ya se usa para tarifa y cercanía), no una ruta real por calles — no
+hay integración con un
 servicio de ruteo (OSRM, Mapbox Directions) en este MVP. Es la misma
 decisión de simplicidad que ya se tomó para la distancia de la tarifa
 (§6): un MVP no necesita ruteo real para ser útil, y agregar ruteo real
@@ -433,7 +473,89 @@ así que las capturas muestran los marcadores sobre un fondo gris en vez de
 calles reales; en un despliegue con acceso normal a internet, los tiles
 cargan igual que cualquier imagen de una página web.
 
-## 10. Integración con WhatsApp: opciones y recomendación
+## 10. Verificación facial en la activación diaria
+
+Además de la cédula (§7), activarse cada día requiere una **verificación
+facial en vivo**: la primera vez, el domiciliario captura un rostro de
+referencia desde su PWA (`POST /api/couriers/:id/face-reference`); a
+partir de ahí, cada activación exige una selfie nueva que se compara
+contra esa referencia (`POST /api/couriers/:id/activate`, ahora con un
+tercer requisito además de la cédula).
+
+**Dónde corre cada parte, y por qué**:
+
+1. **Extracción, 100% client-side** (`frontend/courier/face.js`, sobre
+   `face-api.js`): el navegador del domiciliario detecta el rostro
+   (`TinyFaceDetector`) y calcula un **descriptor de 128 números**
+   (`FaceRecognitionNet`) a partir del video de su cámara. La foto **nunca
+   sale del dispositivo** — lo único que viaja al backend es ese arreglo
+   de números, que no se puede revertir a una imagen reconocible. Es la
+   misma razón por la que se guarda el descriptor y no la foto en
+   `Courier.faceDescriptor`.
+2. **Comparación, 100% server-side** (`backend/src/domain/
+   face-verification.ts`, sin ninguna dependencia de ML): el backend
+   nunca confía en que el cliente le diga "coincide" — recibe los dos
+   descriptores (el guardado como referencia y el de la selfie en vivo) y
+   calcula él mismo la distancia euclidiana entre ambos
+   (`euclideanDistance`), comparándola contra un umbral
+   (`FACE_MATCH_THRESHOLD`, 0.6 por defecto — el valor que la propia
+   documentación de face-api.js recomienda para su modelo de
+   reconocimiento). Es la misma filosofía que la asignación atómica de
+   pedidos (§4): la parte que importa para la seguridad del sistema no se
+   deja en manos del cliente.
+
+`CourierActivationService.activate` encadena los tres requisitos **en
+este orden**: cédula correcta → rostro registrado y coincidente → sin
+comisión pendiente de un día anterior (§7). Si falta el rostro de
+referencia (nunca lo capturó) se rechaza con `428 Precondition Required`;
+si no coincide, con `403` (incluyendo la distancia calculada y el umbral,
+para debugging — nunca la imagen). Ver
+`backend/tests/courier-activation.test.ts` y
+`backend/tests/courier-face-api.test.ts` para el detalle probado de cada
+combinación.
+
+**Por qué face-api.js vendorizado localmente**
+(`frontend/vendor/face-api/`, no un CDN): mismo motivo exacto que Leaflet
+(§9) — es una librería gratuita y de código abierto que no requiere
+servidor de inferencia propio ni API key, y vendorizarla evita depender
+de que un tercero externo esté disponible en cada carga. El mismo patrón
+de guarda defensiva que se usó para Leaflet
+(`mapAvailable = typeof L !== "undefined"`) se repite aquí
+(`FACE_API_AVAILABLE = typeof faceapi !== "undefined"` en `face.js`): si
+la librería no carga, la captura de rostro se deshabilita en silencio en
+vez de romper el resto de la PWA — aunque, a diferencia del mapa, esta sí
+es una dependencia dura del flujo de activación (sin rostro capturado, no
+hay forma de activarse).
+
+**Limitación conocida — sin detección de vida (liveness/anti-spoofing)**:
+este MVP verifica que el rostro capturado **coincide** con el de
+referencia, pero no verifica que sea una persona real frente a la cámara
+en ese momento — una foto impresa o la pantalla de otro celular mostrando
+la foto de referencia podría, en principio, pasar la verificación. Se
+consideró deliberadamente fuera de alcance del MVP: implementar liveness
+real (parpadeo, movimiento de cabeza bajo instrucción, o un modelo de
+detección de "presentation attacks") es un problema no trivial que
+justifica su propio ciclo de trabajo. **Recomendación para la siguiente
+iteración**: evaluar una librería de liveness activo (ej. pedirle al
+domiciliario que gire la cabeza o parpadee, verificado con los mismos
+landmarks de `face-api.js`) o un proveedor especializado de verificación
+de identidad (ej. servicios que combinan reconocimiento facial con prueba
+de vida y verificación de documento) antes de depender de esto como único
+control anti-fraude en producción.
+
+**Nota legal — datos biométricos y habeas data**: un descriptor facial es
+un dato biométrico, y varias jurisdicciones de LatAm lo tratan como dato
+sensible bajo su marco de *habeas data* (ej. la Ley 1581 de 2012 en
+Colombia y su regulación de datos sensibles). Este MVP implementa el
+requisito mínimo — una casilla de consentimiento explícito antes de
+capturar el rostro, registrada con fecha/hora
+(`Courier.faceConsentGivenAt`) — pero **no** un flujo legal completo
+(política de tratamiento de datos formal, mecanismo de revocación,
+registro ante la autoridad correspondiente, etc.). Antes de operar esto en
+producción, el equipo debería revisar la normativa de protección de datos
+biométricos vigente en cada país de operación con asesoría legal local.
+
+## 11. Integración con WhatsApp: opciones y recomendación
 
 No había credenciales de WhatsApp Business al momento de construir el MVP.
 Lo que sí se construyó y está probado end-to-end es toda la lógica de
@@ -473,7 +595,7 @@ Pendiente de implementar en cuanto haya credenciales:
   Postgres en vez de en memoria, para que sobreviva reinicios y funcione
   con más de una instancia del backend corriendo a la vez.
 
-## 11. Fuera de alcance en este MVP
+## 12. Fuera de alcance en este MVP
 
 - **Pagos**: tanto el cobro del servicio (negocio → domiciliario) como el
   pago de la comisión (domiciliario → plataforma) se manejan
@@ -496,12 +618,18 @@ Pendiente de implementar en cuanto haya credenciales:
   deliberada para mantener el costo operativo bajo en el mercado objetivo,
   no un descuido. El admin sí tiene una barrera (`ADMIN_API_KEY`), pero
   tampoco es un login completo — ver el siguiente punto.
-- **Ruteo real en el mapa**: el trayecto del domiciliario hacia la
-  recogida (§9) se dibuja en línea recta, no por una ruta real de calles —
-  misma simplificación que ya se aplica a la distancia usada para la
-  tarifa (§6).
+- **Ruteo real en el mapa**: el trayecto del domiciliario, en cualquiera
+  de los dos tramos (§9), se dibuja en línea recta, no por una ruta real
+  de calles — misma simplificación que ya se aplica a la distancia usada
+  para la tarifa (§6).
+- **Liveness/anti-spoofing en la verificación facial**: la comparación
+  facial (§10) verifica que el rostro coincida con la referencia, pero no
+  que haya una persona real frente a la cámara en ese momento — una foto o
+  la pantalla de otro celular podría, en principio, pasar la
+  verificación. Ver §10 para la recomendación de qué evaluar antes de
+  producción.
 
-## 12. Consideraciones para producción (fuera del alcance del MVP)
+## 13. Consideraciones para producción (fuera del alcance del MVP)
 
 - **Autenticación/autorización real para los 3 roles**: hoy el admin se
   protege con una clave compartida por cabecera (suficiente para un solo
@@ -512,6 +640,13 @@ Pendiente de implementar en cuanto haya credenciales:
   domiciliario contra una fuente oficial en vez de solo tomarla tal cual
   la escribió.
 - **Rate limiting** en los endpoints públicos y en el webhook de WhatsApp.
+- **Dato biométrico en reposo**: `Courier.faceDescriptor` (§10) hoy se
+  guarda tal cual en Postgres (columna `JSONB`), igual que la cédula. Antes
+  de producción conviene cifrarlo en reposo, restringir qué respuestas de
+  la API lo devuelven (hoy `GET /api/couriers/:id` lo incluye completo), y
+  definir una política de retención/borrado si un domiciliario deja la
+  plataforma — además de resolver el punto legal de habeas data que ya
+  señala §10.
 - **Estado de la cascada de asignación en memoria** (§4): el mapa
   `orderId → cascada` vive en el proceso de Node, no en la base de datos.
   Con una sola instancia del backend (el caso del MVP) esto es correcto;

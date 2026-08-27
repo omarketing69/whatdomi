@@ -76,4 +76,47 @@ describe("notificador de WhatsApp en la asignación", () => {
     expect(sent[0].phone).toBe(business.phone);
     expect(sent[0].message).toMatch(/no encontramos domiciliarios/i);
   });
+
+  it("avisa al negocio cuando el pedido se marca como entregado", async () => {
+    const repo = new InMemoryDispatchRepository();
+    const business = await repo.createBusiness({ name: "Tienda X", phone: "+573000000030" });
+    const order = await repo.createOrder({
+      businessId: business.id,
+      pickup: { lat: 4.65, lng: -74.08 },
+      pickupAddress: "A",
+      dropoff: { lat: 4.66, lng: -74.09 },
+      dropoffAddress: "Casa del cliente",
+    });
+    const delivered = { ...order, status: "DELIVERED" as const, deliveredAt: new Date() };
+
+    const { sender, sent } = recordingSender();
+    const notifier = createWhatsAppDispatchNotifier(repo, sender);
+    notifier.onOrderStatusChanged(delivered);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].phone).toBe(business.phone);
+    expect(sent[0].message).toMatch(/entregado/i);
+    expect(sent[0].message).toContain("Casa del cliente");
+  });
+
+  it("no notifica nada para otros cambios de estado (ej. SEARCHING, ASSIGNED)", async () => {
+    const repo = new InMemoryDispatchRepository();
+    const business = await repo.createBusiness({ name: "Tienda X", phone: "+573000000031" });
+    const order = await repo.createOrder({
+      businessId: business.id,
+      pickup: { lat: 4.65, lng: -74.08 },
+      pickupAddress: "A",
+      dropoff: { lat: 4.66, lng: -74.09 },
+      dropoffAddress: "B",
+    });
+
+    const { sender, sent } = recordingSender();
+    const notifier = createWhatsAppDispatchNotifier(repo, sender);
+    notifier.onOrderStatusChanged({ ...order, status: "IN_PROGRESS" });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sent).toHaveLength(0);
+  });
 });

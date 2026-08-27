@@ -68,6 +68,17 @@ export interface Courier {
    * le falta para producción (y sobre tratarla como dato sensible).
    */
   nationalId: string;
+  /**
+   * Vector de 128 números (embedding facial) extraído por `face-api.js` en
+   * el navegador del domiciliario a partir de su selfie de referencia.
+   * Deliberadamente NO se guarda la foto: el descriptor no se puede
+   * revertir a una imagen reconocible, así que minimiza el dato biométrico
+   * sensible que queda en el servidor. `null` hasta que registre su
+   * rostro — ver `docs/ARCHITECTURE.md` §10.
+   */
+  faceDescriptor: number[] | null;
+  /** Cuándo aceptó explícitamente (checkbox) que se capture y procese su rostro. `null` si nunca lo hizo. */
+  faceConsentGivenAt: Date | null;
   lat: number | null;
   lng: number | null;
   lastSeenAt: Date | null;

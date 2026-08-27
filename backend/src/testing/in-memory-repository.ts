@@ -85,6 +85,8 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       nationalId: input.nationalId,
       vehiclePlate: input.vehiclePlate ?? null,
       isActive: false,
+      faceDescriptor: null,
+      faceConsentGivenAt: null,
       lat: null,
       lng: null,
       lastSeenAt: null,
@@ -99,6 +101,8 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       vehiclePlate: courier.vehiclePlate ?? null,
       isActive: courier.isActive ?? true,
       nationalId: courier.nationalId ?? nextId("cedula"),
+      faceDescriptor: courier.faceDescriptor ?? null,
+      faceConsentGivenAt: courier.faceConsentGivenAt ?? null,
       lat: courier.lat ?? null,
       lng: courier.lng ?? null,
       lastSeenAt: courier.lastSeenAt ?? new Date(),
@@ -106,6 +110,18 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     };
     this.couriers.set(full.id, full);
     return full;
+  }
+
+  async setCourierFaceReference(
+    courierId: string,
+    descriptor: number[],
+    consentGivenAt: Date
+  ): Promise<Courier | null> {
+    const courier = this.couriers.get(courierId);
+    if (!courier) return null;
+    const updated: Courier = { ...courier, faceDescriptor: [...descriptor], faceConsentGivenAt: consentGivenAt };
+    this.couriers.set(courierId, updated);
+    return { ...updated };
   }
 
   async createOrder(input: CreateOrderInput): Promise<Order> {
@@ -141,6 +157,13 @@ export class InMemoryDispatchRepository implements DispatchRepository {
   async getOrder(orderId: string): Promise<Order | null> {
     const order = this.orders.get(orderId);
     return order ? { ...order } : null;
+  }
+
+  async findInProgressOrderForCourier(courierId: string): Promise<Order | null> {
+    const inProgress = Array.from(this.orders.values())
+      .filter((order) => order.status === "IN_PROGRESS" && order.courierId === courierId)
+      .sort((a, b) => (b.assignedAt?.getTime() ?? 0) - (a.assignedAt?.getTime() ?? 0));
+    return inProgress[0] ? { ...inProgress[0] } : null;
   }
 
   async listOrders(filter?: { statuses?: OrderStatus[]; limit?: number }): Promise<Order[]> {

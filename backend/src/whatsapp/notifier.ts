@@ -61,6 +61,18 @@ export function createWhatsAppDispatchNotifier(
     );
   }
 
+  /**
+   * El cierre del servicio puede llegar por dos caminos (cierre automático
+   * por geocerca al llegar al destino, o el botón manual "Entregado" en la
+   * PWA del domiciliario, ver DispatchService) — en ambos casos termina
+   * pasando por `markDelivered`, así que un único mensaje aquí cubre los dos.
+   */
+  async function notifyDelivered(order: Order): Promise<void> {
+    const business = await repo.getBusiness(order.businessId);
+    if (!business) return;
+    await send(business.phone, `📦 ¡Pedido entregado! Se completó la entrega en ${order.dropoffAddress}.`);
+  }
+
   return {
     onOrderOffered() {
       // El solicitante ya recibió la confirmación al aceptar la cotización;
@@ -71,7 +83,12 @@ export function createWhatsAppDispatchNotifier(
       // Es tráfico interno de la cascada (retirarle la oferta a quien no
       // respondió a tiempo); no hay nada que decirle al negocio por esto.
     },
-    onOrderStatusChanged() {},
+    onOrderStatusChanged(order) {
+      if (order.status !== "DELIVERED") return;
+      notifyDelivered(order).catch((err) =>
+        console.error("[whatsapp] error notificando la entrega del pedido", err)
+      );
+    },
     onOrderAssigned(order, winnerCourierId) {
       notifyAssignment(order, winnerCourierId).catch((err) =>
         console.error("[whatsapp] error notificando la asignación", err)

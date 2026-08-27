@@ -26,7 +26,7 @@ export function createApp(
   app.use("/api/orders", createOrdersRouter(dispatch));
   app.use("/api/businesses", createBusinessesRouter(repo));
   app.use("/api/couriers", createCourierRegistrationRouter(repo));
-  app.use("/api/couriers", createCouriersRouter(repo));
+  app.use("/api/couriers", createCouriersRouter(repo, dispatch));
   app.use("/api/admin", createAdminRouter(repo));
   app.use("/whatsapp", createWhatsAppRouter(conversation, whatsappSender));
 

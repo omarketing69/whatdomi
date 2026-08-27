@@ -1,6 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
-import { CourierActivationService, CourierNotFoundError, InvalidActivationCredentialError } from "../../domain/courier-activation";
+import {
+  CourierActivationService,
+  CourierNotFoundError,
+  FaceReferenceMissingError,
+  FaceVerificationFailedError,
+  InvalidActivationCredentialError,
+} from "../../domain/courier-activation";
+import { FACE_DESCRIPTOR_LENGTH } from "../../domain/face-verification";
+import { DispatchService } from "../../domain/dispatch";
 import { DispatchRepository } from "../../domain/repository";
 import { PendingSettlementError } from "../../domain/settlement";
 import { asyncHandler } from "../async-handler";
@@ -10,8 +18,17 @@ const locationSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
+const faceDescriptorSchema = z.array(z.number()).length(FACE_DESCRIPTOR_LENGTH);
+
 const activateSchema = z.object({
   nationalId: z.string().min(1),
+  faceDescriptor: faceDescriptorSchema,
+});
+
+const faceReferenceSchema = z.object({
+  descriptor: faceDescriptorSchema,
+  /** Consentimiento explícito (checkbox) para capturar/procesar su rostro; sin esto, se rechaza. */
+  consent: z.literal(true),
 });
 
 const nearbyQuerySchema = z.object({
@@ -31,7 +48,7 @@ const MAX_MAP_RESULTS = 50;
  * los domiciliarios activos cerca del punto de recogida antes de que se
  * asigne ninguno.
  */
-export function createCouriersRouter(repo: DispatchRepository): Router {
+export function createCouriersRouter(repo: DispatchRepository, dispatch: DispatchService): Router {
   const router = Router();
   const activation = new CourierActivationService(repo);
 
@@ -72,13 +89,39 @@ export function createCouriersRouter(repo: DispatchRepository): Router {
     })
   );
 
+  /**
+   * Registra (o reemplaza) el rostro de referencia del domiciliario: el
+   * descriptor de 128 números ya fue extraído client-side por face-api.js
+   * a partir de su selfie — aquí solo se guarda, junto con la marca de
+   * tiempo del consentimiento explícito (checkbox), nunca la foto.
+   */
+  router.post(
+    "/:courierId/face-reference",
+    asyncHandler(async (req, res) => {
+      const parsed = faceReferenceSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+      const courier = await repo.setCourierFaceReference(
+        req.params.courierId,
+        parsed.data.descriptor,
+        new Date()
+      );
+      if (!courier) return res.status(404).json({ error: "Domiciliario no encontrado" });
+      return res.json({ courier });
+    })
+  );
+
   router.post(
     "/:courierId/location",
     asyncHandler(async (req, res) => {
       const parsed = locationSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-      const courier = await repo.upsertCourierLocation(req.params.courierId, parsed.data);
+      // También intenta el cierre automático por geocerca si este domiciliario
+      // tiene un pedido IN_PROGRESS y esta posición ya está cerca del destino
+      // (ver DispatchService.reportCourierLocation) — best-effort, nunca
+      // bloquea el guardado de la ubicación en sí.
+      const courier = await dispatch.reportCourierLocation(req.params.courierId, parsed.data);
       if (!courier) return res.status(404).json({ error: "Domiciliario no encontrado" });
       return res.json({ courier });
     })
@@ -91,11 +134,19 @@ export function createCouriersRouter(repo: DispatchRepository): Router {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
       try {
-        const courier = await activation.activate(req.params.courierId, parsed.data.nationalId);
+        const courier = await activation.activate(
+          req.params.courierId,
+          parsed.data.nationalId,
+          parsed.data.faceDescriptor
+        );
         return res.json({ courier });
       } catch (err) {
         if (err instanceof CourierNotFoundError) return res.status(404).json({ error: err.message });
         if (err instanceof InvalidActivationCredentialError) return res.status(403).json({ error: err.message });
+        if (err instanceof FaceReferenceMissingError) return res.status(428).json({ error: err.message });
+        if (err instanceof FaceVerificationFailedError) {
+          return res.status(403).json({ error: err.message, distance: err.distance, threshold: err.threshold });
+        }
         if (err instanceof PendingSettlementError) {
           return res.status(402).json({ error: err.message, pending: err.pending });
         }

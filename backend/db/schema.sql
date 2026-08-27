@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS couriers (
   -- credencial de activación (no hay un código generado aparte, ver
   -- CourierActivationService). Dato sensible (PII) — ver docs/ARCHITECTURE.md §7.
   national_id      TEXT NOT NULL UNIQUE,
+  -- Descriptor facial de 128 números extraído client-side por face-api.js
+  -- a partir de la selfie de referencia del domiciliario. Deliberadamente
+  -- NO se guarda la foto — ver docs/ARCHITECTURE.md §10 y Courier.faceDescriptor.
+  face_descriptor       JSONB,
+  face_consent_given_at TIMESTAMPTZ,
   lat              DOUBLE PRECISION,
   lng              DOUBLE PRECISION,
   -- Columna geográfica derivada de lat/lng (ver trigger más abajo), usada

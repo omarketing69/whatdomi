@@ -4,9 +4,20 @@ const LOCATION_INTERVAL_MS = 15_000;
 
 const registerForm = document.getElementById("register-form");
 const registerStatus = document.getElementById("register-status");
+const faceRegisterSection = document.getElementById("face-register-section");
+const faceRegisterConsent = document.getElementById("face-register-consent");
+const faceRegisterVideo = document.getElementById("face-register-video");
+const faceRegisterStartBtn = document.getElementById("face-register-start-btn");
+const faceRegisterCaptureBtn = document.getElementById("face-register-capture-btn");
+const faceRegisterStatus = document.getElementById("face-register-status");
 const activationSection = document.getElementById("activation-section");
 const activationForm = document.getElementById("activation-form");
 const activationStatus = document.getElementById("activation-status");
+const activateSubmitBtn = document.getElementById("activate-submit-btn");
+const faceActivateVideo = document.getElementById("face-activate-video");
+const faceActivateStartBtn = document.getElementById("face-activate-start-btn");
+const faceActivateCaptureBtn = document.getElementById("face-activate-capture-btn");
+const faceActivateStatus = document.getElementById("face-activate-status");
 const statusPill = document.getElementById("status-pill");
 const deactivateBtn = document.getElementById("deactivate-btn");
 const offerSection = document.getElementById("offer-section");
@@ -17,6 +28,9 @@ let locationTimer = null;
 let lastPosition = null;
 let socket = null;
 let currentOfferOrderId = null;
+let faceRegisterStream = null;
+let faceActivateStream = null;
+let liveFaceDescriptor = null; // capturado en el paso de activación, se manda junto con la cédula
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch((err) => console.warn("SW no se pudo registrar", err));
@@ -52,6 +66,7 @@ function setPill(online) {
 
 const stored = getStored();
 if (stored?.courierId) {
+  faceRegisterSection.hidden = false;
   activationSection.hidden = false;
   activationForm.courierId.value = stored.courierId;
   if (stored.nationalId) activationForm.nationalId.value = stored.nationalId;
@@ -70,9 +85,10 @@ registerForm.addEventListener("submit", async (event) => {
     const { courier } = await apiFetch("/api/couriers", { method: "POST", body: JSON.stringify(data) });
     storeCourier({ courierId: courier.id, nationalId: courier.nationalId, name: courier.name });
 
-    registerStatus.textContent = `¡Registrado! Usa tu cédula (${courier.nationalId}) para activarte.`;
+    registerStatus.textContent = `¡Registrado! Ahora registra tu rostro antes de poder activarte.`;
     registerStatus.className = "status ok";
 
+    faceRegisterSection.hidden = false;
     activationSection.hidden = false;
     activationForm.courierId.value = courier.id;
     activationForm.nationalId.value = courier.nationalId;
@@ -82,16 +98,106 @@ registerForm.addEventListener("submit", async (event) => {
   }
 });
 
+// --- Captura del rostro de referencia (una vez, tras el registro) ---
+// Extracción 100% client-side con face-api.js (frontend/courier/face.js);
+// solo el descriptor de 128 números viaja al backend, nunca la foto.
+const faceApiAvailable = typeof window.WhatDomiFace !== "undefined" && window.WhatDomiFace.FACE_API_AVAILABLE;
+if (!faceApiAvailable) {
+  console.warn("[face] face-api.js no disponible; la captura de rostro queda deshabilitada en esta sesión.");
+}
+
+faceRegisterStartBtn.addEventListener("click", async () => {
+  try {
+    faceRegisterStatus.textContent = "Encendiendo cámara...";
+    faceRegisterStatus.className = "status";
+    faceRegisterStream = await window.WhatDomiFace.startCamera(faceRegisterVideo);
+    faceRegisterCaptureBtn.disabled = false;
+    faceRegisterStatus.textContent = "Cámara lista. Mira al frente y presiona \"Capturar rostro\".";
+  } catch (err) {
+    faceRegisterStatus.textContent = `No se pudo acceder a la cámara: ${err.message}`;
+    faceRegisterStatus.className = "status error";
+  }
+});
+
+faceRegisterCaptureBtn.addEventListener("click", async () => {
+  const stored = getStored();
+  if (!stored?.courierId) return;
+  if (!faceRegisterConsent.checked) {
+    faceRegisterStatus.textContent = "Primero debes aceptar la casilla de consentimiento.";
+    faceRegisterStatus.className = "status error";
+    return;
+  }
+
+  faceRegisterStatus.textContent = "Analizando rostro...";
+  faceRegisterStatus.className = "status";
+  const descriptor = await window.WhatDomiFace.captureFaceDescriptor(faceRegisterVideo);
+  if (!descriptor) {
+    faceRegisterStatus.textContent = "No detectamos tu rostro. Acércate a la cámara, mejora la luz e intenta de nuevo.";
+    faceRegisterStatus.className = "status error";
+    return;
+  }
+
+  try {
+    await apiFetch(`/api/couriers/${stored.courierId}/face-reference`, {
+      method: "POST",
+      body: JSON.stringify({ descriptor, consent: true }),
+    });
+    faceRegisterStatus.textContent = "¡Rostro de referencia guardado! Ya puedes activarte todos los días verificándolo.";
+    faceRegisterStatus.className = "status ok";
+  } catch (err) {
+    faceRegisterStatus.textContent = `No se pudo guardar tu rostro: ${err.message}`;
+    faceRegisterStatus.className = "status error";
+  }
+});
+
+// --- Verificación facial en vivo (cada activación) ---
+faceActivateStartBtn.addEventListener("click", async () => {
+  try {
+    faceActivateStatus.textContent = "Encendiendo cámara...";
+    faceActivateStatus.className = "status";
+    faceActivateStream = await window.WhatDomiFace.startCamera(faceActivateVideo);
+    faceActivateCaptureBtn.disabled = false;
+    faceActivateStatus.textContent = "Cámara lista. Mira al frente y presiona \"Verificar rostro\".";
+  } catch (err) {
+    faceActivateStatus.textContent = `No se pudo acceder a la cámara: ${err.message}`;
+    faceActivateStatus.className = "status error";
+  }
+});
+
+faceActivateCaptureBtn.addEventListener("click", async () => {
+  faceActivateStatus.textContent = "Analizando rostro...";
+  faceActivateStatus.className = "status";
+  const descriptor = await window.WhatDomiFace.captureFaceDescriptor(faceActivateVideo);
+  if (!descriptor) {
+    faceActivateStatus.textContent = "No detectamos tu rostro. Acércate a la cámara, mejora la luz e intenta de nuevo.";
+    faceActivateStatus.className = "status error";
+    liveFaceDescriptor = null;
+    activateSubmitBtn.disabled = true;
+    return;
+  }
+
+  liveFaceDescriptor = descriptor;
+  faceActivateStatus.textContent = "Rostro capturado. Ya puedes activarte.";
+  faceActivateStatus.className = "status ok";
+  activateSubmitBtn.disabled = false;
+});
+
 activationForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const { courierId, nationalId } = Object.fromEntries(new FormData(activationForm).entries());
+
+  if (!liveFaceDescriptor) {
+    activationStatus.textContent = "Primero verifica tu rostro con la cámara.";
+    activationStatus.className = "status error";
+    return;
+  }
 
   try {
     activationStatus.textContent = "Activando...";
     activationStatus.className = "status";
     await apiFetch(`/api/couriers/${courierId}/activate`, {
       method: "POST",
-      body: JSON.stringify({ nationalId }),
+      body: JSON.stringify({ nationalId, faceDescriptor: liveFaceDescriptor }),
     });
 
     storeCourier({ ...getStored(), courierId, nationalId });
@@ -99,6 +205,8 @@ activationForm.addEventListener("submit", async (event) => {
     activationStatus.className = "status ok";
     setPill(true);
     offerSection.hidden = false;
+    liveFaceDescriptor = null;
+    activateSubmitBtn.disabled = true;
 
     startLocationReporting(courierId);
     connectSocket(courierId);

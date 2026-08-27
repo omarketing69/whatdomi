@@ -64,10 +64,17 @@ if (!mapAvailable) {
 
 let map = null;
 let pickupMarker = null;
+let dropoffMarker = null;
 let courierMarkersById = new Map();
 let assignedMarker = null;
 let trajectoryLine = null;
 let pickupPoint = null;
+let dropoffPoint = null;
+// Estado del pedido: mientras esté ASSIGNED, el tramo en vivo es
+// domiciliario → recogida; una vez IN_PROGRESS (ya recogido), el segundo
+// tramo es recogida → entrega, así que el destino visual del mapa cambia
+// de la recogida a la entrega (ver refreshAssignedCourierLocation).
+let currentOrderStatus = null;
 let nearbyTimer = null;
 let trackingTimer = null;
 
@@ -83,6 +90,13 @@ const assignedIcon = mapAvailable
       className: "",
       html: '<div style="width:16px;height:16px;border-radius:50%;background:#b3261e;border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,.6);"></div>',
       iconSize: [16, 16],
+    })
+  : null;
+const dropoffIcon = mapAvailable
+  ? new L.DivIcon({
+      className: "",
+      html: '<div style="width:14px;height:14px;background:#1c1e21;border-radius:2px;"></div>',
+      iconSize: [14, 14],
     })
   : null;
 
@@ -162,8 +176,26 @@ function stopNearbyPolling() {
   courierMarkersById.clear();
 }
 
+/**
+ * El destino visual del segundo tramo (recogida→entrega) se pinta la
+ * primera vez que el pedido pasa a IN_PROGRESS — antes de eso no tiene
+ * sentido mostrarlo como si fuera el punto al que va el domiciliario.
+ */
+function ensureDropoffMarker() {
+  if (!mapAvailable || !dropoffPoint || dropoffMarker) return;
+  dropoffMarker = L.marker([dropoffPoint.lat, dropoffPoint.lng], { icon: dropoffIcon })
+    .addTo(map)
+    .bindPopup("Punto de entrega");
+}
+
 async function refreshAssignedCourierLocation() {
   if (!mapAvailable || !currentOrderId || !pickupPoint) return;
+  // Primer tramo (domiciliario → recogida) mientras está ASSIGNED; segundo
+  // tramo (recogida → entrega) una vez recogido el pedido (IN_PROGRESS).
+  const target = currentOrderStatus === "IN_PROGRESS" ? dropoffPoint : pickupPoint;
+  if (!target) return;
+  if (currentOrderStatus === "IN_PROGRESS") ensureDropoffMarker();
+
   try {
     const { location } = await apiFetch(`/api/orders/${currentOrderId}/courier-location`);
     if (!location) return;
@@ -175,13 +207,13 @@ async function refreshAssignedCourierLocation() {
       assignedMarker = L.marker(latlng, { icon: assignedIcon }).addTo(map).bindPopup("Tu domiciliario");
     }
 
-    const pickupLatLng = [pickupPoint.lat, pickupPoint.lng];
+    const targetLatLng = [target.lat, target.lng];
     if (trajectoryLine) {
-      trajectoryLine.setLatLngs([latlng, pickupLatLng]);
+      trajectoryLine.setLatLngs([latlng, targetLatLng]);
     } else {
-      trajectoryLine = L.polyline([latlng, pickupLatLng], { color: "#16794f", dashArray: "6 6" }).addTo(map);
+      trajectoryLine = L.polyline([latlng, targetLatLng], { color: "#16794f", dashArray: "6 6" }).addTo(map);
     }
-    map.fitBounds([latlng, pickupLatLng], { padding: [30, 30] });
+    map.fitBounds([latlng, targetLatLng], { padding: [30, 30] });
   } catch {
     // Igual que arriba: un fallo puntual no debería tumbar el resto de la página.
   }
@@ -277,6 +309,7 @@ orderForm.addEventListener("submit", async (event) => {
       body: JSON.stringify(payload),
     });
     currentOrderId = order.id;
+    dropoffPoint = payload.dropoff;
     trackingSection.hidden = false;
     renderOrder(order, candidatesOffered);
     startPolling();
@@ -298,6 +331,8 @@ const STATUS_LABELS = {
 };
 
 function renderOrder(order, candidatesOffered) {
+  currentOrderStatus = order.status;
+  if (!dropoffPoint && order.dropoff) dropoffPoint = order.dropoff; // ej. tras recargar la página
   const label = STATUS_LABELS[order.status] ?? order.status;
   orderSummary.innerHTML = `
     <span class="badge">${label}</span>
