@@ -11,6 +11,16 @@ CREATE TABLE IF NOT EXISTS businesses (
   name        TEXT NOT NULL,
   phone       TEXT NOT NULL UNIQUE,
   address     TEXT,
+  -- Cuenta de acceso al dashboard (reemplaza el flujo de WhatsApp, ver
+  -- docs/ARCHITECTURE.md §11): email + contraseña hasheada (bcrypt).
+  -- Nulos en negocios sembrados directamente para pruebas internas, que
+  -- no pueden loguearse.
+  email                TEXT UNIQUE,
+  password_hash        TEXT,
+  -- Punto de recogida por defecto, geocodificado una sola vez al
+  -- registrarse; el negocio puede sobreescribirlo por pedido puntual.
+  default_pickup_lat   DOUBLE PRECISION,
+  default_pickup_lng   DOUBLE PRECISION,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

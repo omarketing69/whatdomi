@@ -1,28 +1,10 @@
 import { describe, expect, it } from "vitest";
 import request from "supertest";
-import { createApp } from "../src/api/app";
-import { DispatchService } from "../src/domain/dispatch";
-import { AddressNormalizer, GeocodeResult, GeocodingProvider, GeocodingService } from "../src/domain/geocoding";
 import { InMemoryDispatchRepository } from "../src/testing/in-memory-repository";
-import { WhatsAppConversationService } from "../src/whatsapp/conversation";
-
-class NoopNormalizer implements AddressNormalizer {
-  async normalize(rawText: string): Promise<string> {
-    return rawText;
-  }
-}
-class NoopProvider implements GeocodingProvider {
-  async geocode(): Promise<GeocodeResult | null> {
-    return null;
-  }
-}
+import { makeApp as makeAppWithDeps } from "./helpers/make-app";
 
 function makeApp(repo = new InMemoryDispatchRepository()) {
-  const dispatch = new DispatchService(repo);
-  const geocoding = new GeocodingService(new NoopNormalizer(), new NoopProvider());
-  const conversation = new WhatsAppConversationService(repo, dispatch, geocoding);
-  const app = createApp(repo, dispatch, conversation, async () => {});
-  return { repo, dispatch, app };
+  return makeAppWithDeps({ repo });
 }
 
 describe("GET /api/couriers/nearby", () => {

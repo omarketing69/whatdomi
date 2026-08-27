@@ -10,52 +10,49 @@ stack detrás de ella. Para instrucciones de instalación y ejecución ver el
                       ┌──────────────────────┐
                       │  Negocio (solicitante) │
                       └──────────┬────────────┘
-                 WhatsApp        │        Web directa
-         ┌──────────────────────┴──────────────────────┐
-         │                                              │
-┌────────▼──────────────┐                    ┌─────────▼─────────┐
-│  WhatsApp Business      │  bot conversacional │  Frontend web      │
-│  (webhook Meta/Twilio)  │  (nombre, origen,    │  (formulario       │
-│                         │   destino, tarifa)   │   directo)         │
-└────────┬────────────────┘                    └─────────┬─────────┘
-         │ nombre + direcciones en texto libre             │ lat/lng ya resueltas
-         │                                                  │
-┌────────▼────────────────┐                                │
-│  Geocodificación         │                                │
-│  LLM (normaliza texto)   │                                │
-│  → Nominatim/OSM (geocod)│                                │
-└────────┬────────────────┘                                │
-         │ lat/lng + distancia + tarifa                     │
-         └───────────────────────┬──────────────────────────┘
-                                  │ HTTP (POST /api/orders, /api/orders/:id/accept, etc.)
-                          ┌───────▼────────┐
+                                 │ login (email + contraseña, ver §11)
+                        ┌────────▼────────┐
+                        │  Dashboard web    │  botón "Pedir domiciliario"
+                        │  (autenticado)    │  → dirección de entrega en texto libre
+                        └────────┬─────────┘
+                                 │ dirección en texto libre (la recogida ya
+                                 │ es la registrada del negocio, ver §11)
+                        ┌────────▼────────────────┐
+                        │  Geocodificación          │
+                        │  LLM (normaliza texto)     │
+                        │  → Nominatim/OSM (geocod)  │
+                        └────────┬────────────────┘
+                                 │ lat/lng + distancia + tarifa
+                                 │ HTTP (POST /api/business/orders/quote, /confirm, etc.)
+                          ┌──────▼─────────┐
                           │   Backend API   │   (Node.js + TypeScript + Express)
                           │  DispatchService│
                           └───┬─────────┬───┘
                               │         │
-                 SQL (pg) ┌───▼───┐ ┌───▼──────────┐ Socket.io + WhatsApp saliente
+                 SQL (pg) ┌───▼───┐ ┌───▼──────────┐ Socket.io
                           │Postgres│ │  Notificador  │───────────▶ PWA del domiciliario
                           │+PostGIS│ │  (dispatch)   │───────────▶ Tablero admin (monitoreo)
-                          └────────┘ └──────────────┘───────────▶ WhatsApp del negocio
+                          └────────┘ └──────────────┘───────────▶ Dashboard del negocio (polling)
 ```
 
-Flujo completo de un pedido (WhatsApp, el canal principal):
+Flujo completo de un pedido, desde el dashboard web del negocio (el único
+canal — ver §11 sobre por qué ya no hay un bot de WhatsApp):
 
-1. El negocio escribe al bot de WhatsApp. El bot saluda y pide el
-   **nombre** de quien solicita el servicio.
-2. Pide la dirección de **recogida** y la de **entrega**, ambas en
-   **texto libre** (ej. *"frente al parque central, al lado de la
-   panadería"*) — deliberadamente sin pedir ubicación GPS, porque escribir
-   es más rápido que compartir ubicación para el usuario típico de este
-   mercado.
-3. Ambas direcciones se resuelven a coordenadas vía geocodificación
+1. El negocio, ya logueado, hace clic en **"Pedir domiciliario"** y
+   escribe la dirección de **entrega** en **texto libre** (ej. *"frente
+   al parque central, al lado de la panadería"*) — deliberadamente sin
+   pedir ubicación GPS, porque escribir es más rápido que compartir
+   ubicación para el usuario típico de este mercado. La **recogida** es
+   la ubicación que el negocio ya registró al crear su cuenta (con
+   opción de escribir una distinta para ese pedido puntual).
+2. La dirección de entrega se resuelve a coordenadas vía geocodificación
    asistida por IA (ver §5). Con las coordenadas, el backend calcula
-   distancia y tarifa (ver §6) y se la muestra al solicitante para que
-   confirme (*SI*/*NO*).
-4. Si confirma: se crea el pedido, pasa a `SEARCHING`, y el backend busca
+   distancia y tarifa (ver §6) y se la muestra al negocio para que la
+   confirme.
+3. Si confirma: el pedido pasa a `SEARCHING`, y el backend busca
    domiciliarios **activos** dentro de un radio configurable, ordenados por
    distancia (PostGIS).
-5. Se le ofrece el pedido por WebSocket, **de a uno a la vez**, empezando
+4. Se le ofrece el pedido por WebSocket, **de a uno a la vez**, empezando
    por el más cercano: 60 segundos para aceptar desde su PWA, y si no
    responde se le ofrece automáticamente al siguiente más cercano (ver
    §4). El primero que acepta gana el pedido (`ASSIGNED`); la asignación
@@ -64,25 +61,21 @@ Flujo completo de un pedido (WhatsApp, el canal principal):
    asignación manual en este camino. Si se agota la lista completa sin que
    nadie acepte, el pedido queda `UNASSIGNED` para que un admin lo asigne
    a mano como último recurso.
-6. Al asignarse (automática o manualmente): el **domiciliario** recibe por
-   WhatsApp los datos del servicio (recogida, entrega, tarifa); el
-   **negocio** recibe nombre, placa y teléfono del domiciliario.
-7. El domiciliario recoge (`IN_PROGRESS`) el pedido desde su PWA y avanza
+5. Al asignarse (automática o manualmente): el dashboard del negocio
+   muestra nombre, placa y teléfono del domiciliario (polling sobre
+   `GET /api/orders/:id/courier-contact`, ver §11).
+6. El domiciliario recoge (`IN_PROGRESS`) el pedido desde su PWA y avanza
    hacia el punto de entrega. El cierre se intenta primero **automático
    por geocerca** (si su ubicación en vivo cae dentro de un radio
    configurable del destino, `DELIVERY_GEOFENCE_METERS`) y siempre tiene
    como respaldo el botón manual "Entregado" en su PWA — cualquiera de los
-   dos marca el pedido `DELIVERED`, avisa por WhatsApp al negocio, y
-   recalcula la liquidación de comisión del día del domiciliario (ver
-   §7-8).
-8. En paralelo, el **admin** ve todo esto en vivo desde su panel (polling
+   dos marca el pedido `DELIVERED`, el negocio lo ve reflejado en su
+   dashboard en el siguiente poll, y se recalcula la liquidación de
+   comisión del día del domiciliario (ver §7-8).
+7. En paralelo, el **admin** ve todo esto en vivo desde su panel (polling
    corto sobre la misma API): pedidos en curso (solo monitoreo, con
    reasignar/asignar/cancelar como fallback operativo), tarifa/comisión
    configurables, y liquidaciones diarias por domiciliario.
-
-El formulario web directo (`frontend/index.html`) es un segundo canal para
-negocios que no quieren usar WhatsApp: ya manda lat/lng resueltas, así que
-se salta la cotización y arranca directo en `SEARCHING`.
 
 ## 2. Roles, entidades y ciclo de vida
 
@@ -100,10 +93,12 @@ comentario ahí para el detalle):
   domiciliario), así que necesita algo más que "no hay verificación" —
   pero un login completo (usuario/contraseña, sesiones) es más de lo que
   un MVP de un solo operador necesita. Ver §13 para cómo evolucionar esto.
-- **Business** (negocio): quien solicita domicilios. Nombre, teléfono,
-  dirección. Por WhatsApp se crea automáticamente la primera vez que un
-  número escribe (no hay registro previo ni verificación de identidad).
-- **Courier** (domiciliario): quien los entrega. Nombre, teléfono/WhatsApp,
+- **Business** (negocio): quien solicita domicilios. Nombre, teléfono de
+  contacto, dirección (su punto de recogida por defecto, geocodificado al
+  registrarse), y credenciales de acceso (`email`/`passwordHash`) — se
+  registra una sola vez con `POST /api/auth/register` y opera desde su
+  dashboard autenticado (ver §11).
+- **Courier** (domiciliario): quien los entrega. Nombre, teléfono de contacto,
   placa, `isActive`, `nationalId` (cédula: identificador único y también
   la credencial con la que se activa desde su PWA, ver §7), un descriptor
   facial de referencia (`faceDescriptor`, requerido para activarse junto
@@ -134,11 +129,11 @@ monetización (ver §6-7):
 Ciclo de vida de un pedido (`OrderStatus`):
 
 ```
-                 QUOTED (solo WhatsApp: tarifa calculada,
-                    │     esperando confirmación del solicitante)
+                 QUOTED (tarifa calculada,
+                    │     esperando que el negocio confirme en su dashboard)
                     │
 CREATED ────────────┼──▶ SEARCHING ──▶ ASSIGNED ──▶ IN_PROGRESS ──▶ DELIVERED
-(web directa)       │        │  ▲
+(interno, sin UI)   │        │  ▲
                     │        │  └─ cascada: 60s por candidato (§4)
                     │        ├─▶ NO_COURIERS_AVAILABLE (nadie activo cerca, ni para empezar)
                     │        └─▶ UNASSIGNED ──▶ ASSIGNED (solo asignación manual del admin, §8)
@@ -146,10 +141,14 @@ CREATED ────────────┼──▶ SEARCHING ──▶ ASS
 ```
 
 Ver `backend/src/domain/types.ts` para las definiciones exactas y
-`backend/src/domain/dispatch.ts` para las transiciones permitidas
-(`createDeliveryRequest` para el camino directo, `createQuote` +
-`confirmQuote` para el camino de WhatsApp, ambos comparten la misma
-búsqueda/notificación de candidatos vía `searchAndOffer`).
+`backend/src/domain/dispatch.ts` para las transiciones permitidas.
+`createQuote` + `confirmQuote` es el camino que usa el dashboard del
+negocio (§11): cotizar y esperar confirmación antes de salir a buscar
+domiciliario. `createDeliveryRequest` (arranca directo en `SEARCHING`,
+sin pasar por `QUOTED`) sigue existiendo en `DispatchService` y en
+`POST /api/orders`, pero hoy es un primitivo interno sin ninguna interfaz
+que lo dispare — ninguna pantalla del MVP lo usa. Ambos caminos comparten
+la misma búsqueda/notificación de candidatos vía `searchAndOffer`.
 
 ## 3. Stack elegido y por qué
 
@@ -160,8 +159,8 @@ búsqueda/notificación de candidatos vía `searchAndOffer`).
 | Acceso a datos     | `pg` (node-postgres) con SQL crudo        | Se evitó un ORM (ej. Prisma) para no depender de la descarga de binarios de motor en tiempo de build/CI, que puede fallar en entornos con red restringida. El dominio está detrás de una interfaz (`DispatchRepository`), así que cambiar a un ORM más adelante es un cambio localizado. |
 | Tiempo real        | Socket.io                                 | Notificar domiciliarios candidatos y actualizar el estado del pedido sin polling agresivo. El tablero admin sí usa polling HTTP corto, por simplicidad — no necesita la latencia de un socket para una vista de monitoreo. |
 | Geocodificación    | LLM (normaliza texto) + Nominatim/OSM (resuelve coordenadas) | Ver §5: separar "entender la dirección informal" de "resolver coordenadas reales" en dos pasos, en vez de pedirle coordenadas a un LLM directamente. |
-| WhatsApp           | Flujo conversacional propio sobre un webhook compatible con Meta Cloud API (ver §11) | Sin credenciales reales todavía, pero toda la lógica de negocio (estado de la conversación, cotización, confirmación) ya está implementada y probada; solo falta conectar el envío/recepción real. |
-| Frontend           | HTML/CSS/JS plano, sin build              | Tres páginas simples (formulario de negocio, tablero admin, PWA de domiciliario) no justifican un framework ni un paso de build. |
+| Login del negocio  | JWT (`jsonwebtoken`) + `bcryptjs` (ver §11) | Sin backend de sesiones propio: un token que el cliente guarda y el servidor valida sin consultar una tabla es más simple para este MVP. `bcryptjs` (no `bcrypt`) por ser JS puro, sin binarios nativos — mismo motivo que `pg` sobre un ORM. |
+| Frontend           | HTML/CSS/JS plano, sin build              | Cuatro páginas simples (login/registro, dashboard del negocio, tablero admin, PWA de domiciliario) no justifican un framework ni un paso de build. |
 | Mapa               | Leaflet + tiles de OpenStreetMap, vendorizados localmente (ver §9) | Gratis y sin API key, misma lógica que ya llevó a elegir Nominatim para geocodificar; vendorizado (no CDN) para no depender de un tercero externo en cada carga. |
 | Verificación facial | face-api.js, vendorizado localmente (ver §10) | Librería gratuita, de código abierto, que corre 100% en el navegador (WebGL/CPU, sin servidor de inferencia); vendorizada por el mismo motivo que Leaflet: no depender de un tercero externo en cada carga. |
 | PWA del domiciliario | Web App Manifest + Service Worker mínimo | El mercado objetivo son ciudades pequeñas con celulares de gama baja: una PWA instalable evita la fricción (y el costo de distribución) de una app nativa. |
@@ -265,9 +264,9 @@ confianza).
 `GeocodingService.resolve()` compone ambos pasos y, si el texto normalizado
 no resuelve nada, reintenta con el texto original tal cual lo escribió el
 solicitante, por si la normalización lo empeoró. Si ninguno de los dos
-resuelve, el bot le pide al solicitante que describa la dirección de otra
-forma (ver `WhatsAppConversationService`) en vez de crear un pedido con
-coordenadas erróneas.
+resuelve, quien llama recibe un `GeocodingFailedError` (`POST /api/auth/register`
+y `POST /api/business/orders/quote` lo traducen a `422`, ver §11) en vez de
+crear una cuenta o un pedido con coordenadas erróneas.
 
 ## 6. Tarifa y comisión (configurables por el admin)
 
@@ -284,11 +283,11 @@ tarifa base, costo/km, tarifa mínima, % de comisión, moneda, y una lista de
 recargos declarados (`surcharges`, ej. "nocturno", "zona rural") que el
 admin puede registrar pero que **todavía no se aplican** en el cálculo —
 es una extensión declarada para no cerrar la puerta, no una regla activa.
-El admin la edita desde `PUT /api/admin/config`; el flujo de WhatsApp lee
-la config vigente en cada cotización (`WhatsAppConversationService` llama
-a `repo.getPlatformConfig()` en el momento, no guarda una copia al
-arrancar el servidor), así que un cambio del admin aplica de inmediato a
-la siguiente conversación.
+El admin la edita desde `PUT /api/admin/config`; la ruta de cotización del
+dashboard lee la config vigente en cada cotización (`business-orders.ts`
+llama a `repo.getPlatformConfig()` en el momento, no guarda una copia al
+arrancar el servidor), así que un cambio del admin aplica de inmediato al
+siguiente "Pedir domiciliario".
 
 Las variables `FARE_BASE`/`FARE_PER_KM`/`FARE_MIN`/`FARE_CURRENCY`/
 `COMMISSION_PERCENTAGE` en `.env` solo **siembran** la fila inicial de
@@ -306,7 +305,7 @@ debe a la plataforma — ver §7.
 ## 7. Activación del domiciliario y comisión diaria
 
 El domiciliario se registra una sola vez (`POST /api/couriers`) con su
-nombre, su número de WhatsApp, su placa, y su **número de cédula**
+nombre, su teléfono de contacto, su placa, y su **número de cédula**
 (`nationalId`) — no hay un código de activación generado aparte: la
 cédula misma es la credencial. Para "prender" su sesión y empezar a
 recibir pedidos, la usa en su PWA junto con una verificación facial en
@@ -406,7 +405,7 @@ visual de la línea según el estado del pedido:
    **entrega**, y aparece un marcador nuevo ahí. Es el mismo mecanismo de
    ubicación en vivo (`courier-location`) que ya se usaba para el primer
    tramo — lo único que cambia es cuál punto se usa como destino visual
-   (`frontend/app.js`, variable `currentOrderStatus`).
+   (`frontend/dashboard.js`, variable `currentOrderStatus`).
 
 **Cierre del servicio por geocerca**: mientras el pedido está
 `IN_PROGRESS`, cada reporte de ubicación del domiciliario
@@ -422,14 +421,15 @@ siempre como respaldo (y es el único camino si el cierre automático no
 aplicara, ej. el domicilio se entrega en la puerta de al lado y nunca
 cae dentro del radio configurado). Cualquiera de los dos caminos termina
 en el mismo `DispatchService.markDelivered` — recalcula la liquidación
-del domiciliario y dispara el aviso de entrega por WhatsApp al negocio
-(`whatsapp/notifier.ts`, `onOrderStatusChanged`).
+del domiciliario, y el negocio lo ve reflejado en su dashboard en el
+siguiente poll de `GET /api/orders/:id` (ya no hay un aviso de WhatsApp
+de por medio, ver §11).
 
 **Por qué Leaflet + OpenStreetMap y no Google Maps/Mapbox**: el público
 son ciudades pequeñas de LatAm, donde cuidar el costo operativo es una
 prioridad explícita del producto — Leaflet es gratis y sin límite de uso,
 y OSM no requiere una API key ni tarjeta de crédito, igual que Nominatim
-(ya elegido para geocodificar direcciones en el flujo de WhatsApp, ver
+(ya elegido para geocodificar direcciones de pedidos y de registro, ver
 §5). Es la misma decisión de fondo aplicada dos veces: evitar depender de
 un proveedor de pago para un producto que necesita mantenerse barato de
 operar.
@@ -555,45 +555,96 @@ registro ante la autoridad correspondiente, etc.). Antes de operar esto en
 producción, el equipo debería revisar la normativa de protección de datos
 biométricos vigente en cada país de operación con asesoría legal local.
 
-## 11. Integración con WhatsApp: opciones y recomendación
+## 11. El negocio opera por web con login (ya no hay WhatsApp)
 
-No había credenciales de WhatsApp Business al momento de construir el MVP.
-Lo que sí se construyó y está probado end-to-end es toda la lógica de
-negocio del bot (`backend/src/whatsapp/conversation.ts`): la máquina de
-estados completa (saludo → nombre → recogida → entrega → cotización →
-confirmación → creación del pedido), independiente de qué proveedor la
-transporte. Lo que falta es solo la capa de transporte real:
+**Cambio de arquitectura**: el canal de WhatsApp (bot conversacional,
+webhook de Meta Cloud API, envío de mensajes salientes) se **retiró por
+completo** — ya no existe `backend/src/whatsapp/` ni la ruta
+`/whatsapp/webhook`. El negocio ya no escribe su nombre y direcciones por
+chat cada vez: se **registra una sola vez** (email + contraseña, más su
+ubicación como punto de recogida por defecto) y opera desde un
+**dashboard web autenticado**. La razón es explícitamente de costo y
+trámite: la API de WhatsApp Business (Meta Cloud API o un proveedor como
+Twilio) implica verificación de negocio, plantillas de mensaje aprobadas
+y, en varios casos, costo por conversación — un login propio no tiene
+nada de eso.
 
-- `backend/src/whatsapp/webhook.ts` ya tiene la forma correcta de un
-  webhook de Meta Cloud API (verificación `hub.challenge` + recepción de
-  mensajes) y ya delega al motor conversacional.
-- `backend/src/whatsapp/sender.ts` es un *stub* que solo loguea los
-  mensajes salientes; hay que reemplazarlo por una llamada real a la Graph
-  API (Meta) o al SDK de Twilio.
+**Qué se mantuvo sin cambios**: toda la lógica de dominio que ya existía
+para el flujo de WhatsApp resultó ser transporte-agnóstica y se reutiliza
+tal cual — `DispatchService.createQuote`/`confirmQuote` (cotizar y luego
+confirmar, en vez de crear-y-buscar en un solo paso, ver §2), el cálculo
+de tarifa (§6), la geocodificación de direcciones en texto libre (§5), y
+toda la cascada de asignación (§4). Lo único que cambió es **quién**
+dispara esas llamadas (el dashboard autenticado del negocio, no un bot de
+chat) y **cómo se entera del resultado** (polling HTTP sobre su propia
+sesión, en vez de un mensaje de WhatsApp).
 
-Dos proveedores posibles para esa capa de transporte:
+**Registro y login** (`backend/src/domain/business-auth.ts`,
+`BusinessAuthService`):
 
-- **Meta Cloud API (directo)**: gratis por conversación iniciada por el
-  negocio dentro de la ventana de 24h, pero requiere verificación de
-  negocio en Meta Business Manager (puede tardar días) y manejo manual de
-  plantillas de mensaje aprobadas para iniciar conversación.
-- **Twilio (o similar: 360dialog, MessageBird)**: onboarding más rápido,
-  mejor DX (SDKs, sandbox de pruebas inmediato), pero con costo adicional
-  por mensaje sobre el de Meta.
+1. `POST /api/auth/register` — nombre, teléfono de contacto, email,
+   contraseña, y una **dirección en texto libre** (la misma UX que ya se
+   usaba para recogida/entrega). Esa dirección se geocodifica **una sola
+   vez** aquí (reusando `GeocodingService`) y queda guardada como
+   `Business.location` — el punto de recogida por defecto para todos sus
+   pedidos futuros, así el negocio no tiene que volver a escribirla cada
+   vez que pide un domicilio (puede sobreescribirla puntualmente si algún
+   pedido se recoge desde otro lugar).
+2. La contraseña se guarda hasheada con **bcrypt** (`bcryptjs`, ver más
+   abajo por qué esa librería y no `bcrypt`), nunca en texto plano.
+3. `POST /api/auth/login` — email + contraseña, devuelve un **token JWT**
+   firmado (`jsonwebtoken`) que el frontend guarda en `localStorage` y
+   manda en cada request como `Authorization: Bearer <token>` — mismo
+   patrón de cabecera que `ADMIN_API_KEY`, pero con un token por negocio
+   en vez de una clave compartida única (acá sí hay más de un "dueño":
+   cada negocio solo debe ver/crear sus propios pedidos).
 
-**Recomendación**: empezar con **Twilio** para probar el flujo end-to-end
-rápido en su sandbox de WhatsApp sin esperar la verificación de Meta, y
-migrar a Meta Cloud API directo cuando el volumen justifique ahorrarse el
-margen de Twilio. Cambiar de proveedor implica reemplazar `webhook.ts` y
-`sender.ts` — la máquina de estados conversacional no cambia.
+**JWT vs. sesión con estado en el servidor**: se eligió JWT porque el
+frontend es HTML/JS plano sin backend de sesiones propio, y un token que
+el servidor puede validar sin consultar una tabla de sesiones es la
+opción más simple para este MVP. El costo de esa simplicidad: **no hay
+revocación** — si un token se filtra, sigue siendo válido hasta que
+expira (30 días por defecto). Antes de producción a mayor escala convendría
+o bien sesiones con estado (Redis, revocables) o una lista de revocación
+de JWTs — ver §13.
 
-Pendiente de implementar en cuanto haya credenciales:
-- Verificar `X-Hub-Signature-256` (Meta) o el token de Twilio antes de
-  confiar en el body del webhook.
-- Enviar mensajes salientes de verdad vía la Graph API / API de Twilio.
-- Persistir el estado de la conversación (`ConversationStore`) en Redis o
-  Postgres en vez de en memoria, para que sobreviva reinicios y funcione
-  con más de una instancia del backend corriendo a la vez.
+**Por qué `bcryptjs` y no `bcrypt`**: mismo motivo que llevó a elegir `pg`
+sobre un ORM (§3) — `bcryptjs` es JavaScript puro, sin binarios nativos
+que compilar en tiempo de instalación, lo que evita el mismo riesgo en
+entornos con red restringida que ya motivó esa decisión anterior.
+
+**El dashboard** (`frontend/dashboard.html` + `dashboard.js`): un botón
+"Pedir domiciliario" revela un formulario con solo la **dirección de
+entrega** (la recogida ya es la registrada, con opción de escribir una
+distinta para ese pedido puntual). Al enviarlo:
+
+1. `POST /api/business/orders/quote` — geocodifica la entrega, calcula
+   tarifa/distancia (recogida→entrega, igual que siempre) y crea el
+   pedido en `QUOTED` con el `businessId` tomado de la **sesión
+   autenticada** (nunca de un campo que el usuario pueda manipular).
+2. El negocio ve la tarifa y confirma: `POST /api/business/orders/:id/confirm`
+   llama a `confirmQuote` y arranca la misma cascada automática de
+   siempre.
+3. El dashboard hace polling sobre `GET /api/orders/:id` para el estado
+   del pedido, y sobre `GET /api/orders/:id/courier-contact` (nuevo,
+   reemplaza el mensaje de WhatsApp que antes le daba esos mismos datos)
+   para nombre/placa/teléfono del domiciliario una vez asignado. El mapa
+   en vivo (§9) se reutiliza sin cambios: domiciliarios cercanos antes de
+   asignar, trayecto en los dos tramos después.
+4. Al entregarse el pedido (automático por geocerca o manual, ver §9), el
+   negocio lo ve reflejado en su dashboard en el siguiente poll — ya no
+   hay un mensaje de WhatsApp de por medio, es el mismo `GET /api/orders/:id`
+   de siempre.
+
+**Endpoint retirado**: `POST /api/businesses` (creación anónima de
+negocios, sin credenciales) ya no está montado — el registro pasa por
+`/api/auth/register`, que sí exige credenciales. El repositorio conserva
+`createBusiness` con `email`/`passwordHash` opcionales para no romper los
+datos de prueba sembrados directamente en otros tests.
+
+**Fuera de alcance, declarado a propósito**: recuperación de contraseña
+elaborada (no hay endpoint de "olvidé mi contraseña" en este MVP), 2FA, y
+revocación de tokens JWT antes de que expiren.
 
 ## 12. Fuera de alcance en este MVP
 
@@ -631,15 +682,18 @@ Pendiente de implementar en cuanto haya credenciales:
 
 ## 13. Consideraciones para producción (fuera del alcance del MVP)
 
-- **Autenticación/autorización real para los 3 roles**: hoy el admin se
-  protege con una clave compartida por cabecera (suficiente para un solo
-  operador de la plataforma, no para un equipo), y negocio/domiciliario no
-  tienen cuenta en absoluto. Antes de producción a mayor escala: cuentas
-  con usuario/contraseña o magic link para admins (con roles si hay más de
-  un operador), API key o JWT por negocio, y verificar la cédula del
+- **Autenticación/autorización real para los 3 roles**: el negocio ya
+  tiene cuenta propia (email + contraseña + JWT, ver §11), pero el admin
+  sigue protegido solo por una clave compartida por cabecera (suficiente
+  para un solo operador de la plataforma, no para un equipo), y el
+  domiciliario no tiene cuenta más allá de su cédula (§7). Antes de
+  producción a mayor escala: cuentas con usuario/contraseña o magic link
+  para admins (con roles si hay más de un operador), revocación de tokens
+  JWT del negocio (hoy no hay — ver §11), y verificar la cédula del
   domiciliario contra una fuente oficial en vez de solo tomarla tal cual
   la escribió.
-- **Rate limiting** en los endpoints públicos y en el webhook de WhatsApp.
+- **Rate limiting** en los endpoints públicos, especialmente
+  `/api/auth/login` y `/api/auth/register` (hoy sin límite de intentos).
 - **Dato biométrico en reposo**: `Courier.faceDescriptor` (§10) hoy se
   guarda tal cual en Postgres (columna `JSONB`), igual que la cédula. Antes
   de producción conviene cifrarlo en reposo, restringir qué respuestas de

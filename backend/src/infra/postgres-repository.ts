@@ -65,6 +65,10 @@ type BusinessRow = {
   name: string;
   phone: string;
   address: string | null;
+  email: string | null;
+  password_hash: string | null;
+  default_pickup_lat: number | null;
+  default_pickup_lng: number | null;
   created_at: Date;
 };
 
@@ -131,6 +135,12 @@ function mapBusiness(row: BusinessRow): Business {
     name: row.name,
     phone: row.phone,
     address: row.address,
+    email: row.email,
+    passwordHash: row.password_hash,
+    location:
+      row.default_pickup_lat !== null && row.default_pickup_lng !== null
+        ? { lat: row.default_pickup_lat, lng: row.default_pickup_lng }
+        : null,
     createdAt: row.created_at,
   };
 }
@@ -198,8 +208,18 @@ export class PostgresDispatchRepository implements DispatchRepository {
 
   async createBusiness(input: CreateBusinessInput): Promise<Business> {
     const { rows } = await this.pool.query<BusinessRow>(
-      `INSERT INTO businesses (name, phone, address) VALUES ($1, $2, $3) RETURNING *`,
-      [input.name, input.phone, input.address ?? null]
+      `INSERT INTO businesses (name, phone, address, email, password_hash, default_pickup_lat, default_pickup_lng)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        input.name,
+        input.phone,
+        input.address ?? null,
+        input.email ?? null,
+        input.passwordHash ?? null,
+        input.location?.lat ?? null,
+        input.location?.lng ?? null,
+      ]
     );
     return mapBusiness(rows[0]);
   }
@@ -211,12 +231,11 @@ export class PostgresDispatchRepository implements DispatchRepository {
     return rows[0] ? mapBusiness(rows[0]) : null;
   }
 
-  async findOrCreateBusinessByPhone(phone: string, name: string): Promise<Business> {
-    const existing = await this.pool.query<BusinessRow>(`SELECT * FROM businesses WHERE phone = $1`, [
-      phone,
+  async getBusinessByEmail(email: string): Promise<Business | null> {
+    const { rows } = await this.pool.query<BusinessRow>(`SELECT * FROM businesses WHERE email = $1`, [
+      email,
     ]);
-    if (existing.rows[0]) return mapBusiness(existing.rows[0]);
-    return this.createBusiness({ name, phone });
+    return rows[0] ? mapBusiness(rows[0]) : null;
   }
 
   async createCourier(input: CreateCourierInput): Promise<Courier> {

@@ -5,6 +5,7 @@ import {
   OrderAlreadyTakenError,
   OrderNotFoundError,
 } from "../../domain/dispatch";
+import { DispatchRepository } from "../../domain/repository";
 import { asyncHandler } from "../async-handler";
 import { requireAdminKey } from "./admin";
 
@@ -40,7 +41,7 @@ const ORDER_STATUS_VALUES = [
   "UNASSIGNED",
 ] as const;
 
-export function createOrdersRouter(dispatch: DispatchService): Router {
+export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepository): Router {
   const router = Router();
 
   /**
@@ -105,6 +106,30 @@ export function createOrdersRouter(dispatch: DispatchService): Router {
     asyncHandler(async (req, res) => {
       const location = await dispatch.getCourierLocation(req.params.orderId);
       return res.json({ location });
+    })
+  );
+
+  /**
+   * Para el dashboard del negocio: nombre, placa y teléfono del
+   * domiciliario ya asignado a este pedido (`null` si todavía no hay
+   * ninguno) — reemplaza el mensaje de WhatsApp que antes le daba esos
+   * mismos tres datos al negocio al asignarse. Deliberadamente NO incluye
+   * la cédula ni el descriptor facial del domiciliario, que no son asunto
+   * del negocio.
+   */
+  router.get(
+    "/:orderId/courier-contact",
+    asyncHandler(async (req, res) => {
+      const order = await dispatch.getOrderOrNull(req.params.orderId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (!order.courierId) return res.json({ courier: null });
+
+      const courier = await repo.getCourier(order.courierId);
+      if (!courier) return res.json({ courier: null });
+
+      return res.json({
+        courier: { name: courier.name, vehiclePlate: courier.vehiclePlate ?? null, phone: courier.phone },
+      });
     })
   );
 

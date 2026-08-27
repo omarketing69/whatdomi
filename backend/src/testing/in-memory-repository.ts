@@ -60,6 +60,9 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       name: input.name,
       phone: input.phone,
       address: input.address ?? null,
+      email: input.email ?? null,
+      passwordHash: input.passwordHash ?? null,
+      location: input.location ?? null,
       createdAt: new Date(),
     };
     this.businesses.set(business.id, business);
@@ -71,11 +74,11 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     return business ? { ...business } : null;
   }
 
-  async findOrCreateBusinessByPhone(phone: string, name: string): Promise<Business> {
+  async getBusinessByEmail(email: string): Promise<Business | null> {
     for (const business of this.businesses.values()) {
-      if (business.phone === phone) return { ...business };
+      if (business.email === email) return { ...business };
     }
-    return this.createBusiness({ name, phone });
+    return null;
   }
 
   async createCourier(input: CreateCourierInput): Promise<Courier> {

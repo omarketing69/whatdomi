@@ -3,130 +3,88 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>WhatDomi - Pedir domiciliario</title>
+    <title>WhatDomi - Ingresa a tu negocio</title>
     <link rel="stylesheet" href="styles.css" />
-    <!-- Leaflet vendorizado localmente (frontend/vendor/leaflet) en vez de un CDN: el
-         negocio objetivo son ciudades pequeñas con conexiones modestas, y así el mapa
-         no depende de que un tercero externo esté disponible en cada carga. -->
-    <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
     <style>
-      #map {
-        height: 280px;
-        border-radius: 8px;
-        margin-top: 0.75rem;
-        border: 1px solid var(--border);
+      .tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      .tabs button {
+        flex: 1;
+        background: #eef1f0;
+        color: var(--primary-dark);
+      }
+      .tabs button.active {
+        background: var(--primary);
+        color: white;
       }
     </style>
   </head>
   <body>
     <header>
       <h1>WhatDomi</h1>
-      <p>Solicita un domiciliario para tu negocio, sin pasar por WhatsApp.</p>
+      <p>Pide domiciliarios para tu negocio, directo desde la web.</p>
       <p class="hint"><a href="admin.html">Tablero de administración</a> · <a href="courier/index.html">App del domiciliario</a></p>
     </header>
 
     <main>
-      <section id="business-section">
-        <h2>1. Tu negocio</h2>
-        <p class="hint">
-          Esto se guarda una sola vez en este navegador. Si ya registraste tu negocio antes, se
-          carga automáticamente.
-        </p>
-        <form id="business-form">
+      <section id="auth-section">
+        <div class="tabs">
+          <button type="button" id="tab-login" class="active">Ya tengo cuenta</button>
+          <button type="button" id="tab-register">Registrar mi negocio</button>
+        </div>
+
+        <form id="login-form">
+          <label>
+            Email
+            <input type="email" name="email" required placeholder="tu@negocio.com" />
+          </label>
+          <label>
+            Contraseña
+            <input type="password" name="password" required />
+          </label>
+          <button type="submit">Ingresar</button>
+        </form>
+        <p id="login-status" class="status"></p>
+
+        <form id="register-form" hidden>
           <label>
             Nombre del negocio
             <input type="text" name="name" required placeholder="Restaurante La Esquina" />
           </label>
           <label>
-            Teléfono
+            Teléfono de contacto
             <input type="tel" name="phone" required placeholder="+57 300 000 0000" />
           </label>
           <label>
-            Dirección (opcional)
-            <input type="text" name="address" placeholder="Cra 10 #20-30" />
+            Dirección del negocio
+            <input type="text" name="address" required placeholder="Describe la ubicación, ej: frente al parque central" />
           </label>
-          <button type="submit">Guardar negocio</button>
-        </form>
-        <p id="business-status" class="status"></p>
-      </section>
-
-      <section id="order-section" hidden>
-        <h2>2. Datos del domicilio</h2>
-        <form id="order-form">
-          <fieldset>
-            <legend>Recogida</legend>
-            <label>
-              Dirección de recogida
-              <input type="text" name="pickupAddress" required placeholder="Tu local" />
-            </label>
-            <div class="grid-2">
-              <label>
-                Latitud
-                <input type="number" step="any" name="pickupLat" required />
-              </label>
-              <label>
-                Longitud
-                <input type="number" step="any" name="pickupLng" required />
-              </label>
-            </div>
-            <button type="button" id="use-my-location">Usar mi ubicación actual</button>
-          </fieldset>
-
-          <div id="map"></div>
-          <p class="hint" id="map-hint">
-            Puntos = domiciliarios activos cerca de la recogida. Una vez asignado, se muestra su
-            trayecto en línea recta hacia el punto de recogida (no es una ruta real por calles).
+          <p class="hint">
+            La usamos como tu punto de recogida por defecto — la geocodificamos una sola vez al
+            registrarte, y puedes cambiarla para un pedido puntual si alguna vez recoges desde otro
+            lugar.
           </p>
-
-          <fieldset>
-            <legend>Entrega</legend>
-            <label>
-              Dirección de entrega
-              <input type="text" name="dropoffAddress" required placeholder="Dirección del cliente" />
-            </label>
-            <div class="grid-2">
-              <label>
-                Latitud
-                <input type="number" step="any" name="dropoffLat" required />
-              </label>
-              <label>
-                Longitud
-                <input type="number" step="any" name="dropoffLng" required />
-              </label>
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend>Cliente (opcional)</legend>
-            <label>
-              Nombre
-              <input type="text" name="customerName" />
-            </label>
-            <label>
-              Teléfono
-              <input type="tel" name="customerPhone" />
-            </label>
-            <label>
-              Notas
-              <textarea name="notes" rows="2" placeholder="Ej: apto 302, timbre malo"></textarea>
-            </label>
-          </fieldset>
-
-          <button type="submit">Solicitar domiciliario</button>
+          <label>
+            Email
+            <input type="email" name="email" required placeholder="tu@negocio.com" />
+          </label>
+          <label>
+            Contraseña
+            <input type="password" name="password" required minlength="8" placeholder="Al menos 8 caracteres" />
+          </label>
+          <button type="submit">Registrar mi negocio</button>
         </form>
-      </section>
-
-      <section id="tracking-section" hidden>
-        <h2>3. Estado del pedido</h2>
-        <div id="order-summary"></div>
+        <p id="register-status" class="status"></p>
       </section>
     </main>
 
-    <script src="vendor/leaflet/leaflet.js"></script>
     <script>
       // Cambia esta URL si el backend corre en otro host/puerto (por ejemplo, en producción).
       window.WHATDOMI_API_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
     </script>
-    <script src="app.js"></script>
+    <script src="auth.js"></script>
   </body>
 </html>

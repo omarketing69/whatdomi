@@ -49,13 +49,29 @@ export interface Business {
   name: string;
   phone: string;
   address?: string | null;
+  /**
+   * Cuenta de acceso a la plataforma (email + contraseña hasheada). Son
+   * `null`/`undefined` en negocios creados sin pasar por
+   * `BusinessAuthService.register` (ej. datos de prueba sembrados
+   * directamente en el repositorio) — esos negocios no pueden loguearse,
+   * solo existen como dueños de pedidos para pruebas internas.
+   */
+  email?: string | null;
+  passwordHash?: string | null;
+  /**
+   * Punto de recogida por defecto del negocio (geocodificado una sola vez
+   * al registrarse, ver `BusinessAuthService.register`). El negocio puede
+   * sobreescribirlo para un pedido puntual, pero no tiene que volver a
+   * escribir su dirección cada vez que pide un domicilio.
+   */
+  location?: GeoPoint | null;
   createdAt: Date;
 }
 
 export interface Courier {
   id: string;
   name: string;
-  /** Número de WhatsApp del domiciliario: para contactarlo y para que negocio/cliente lo reciba al asignarse un pedido. */
+  /** Teléfono de contacto del domiciliario: el negocio lo ve en su dashboard al asignarse un pedido (`GET /api/orders/:id/courier-contact`), por si necesita llamarlo. */
   phone: string;
   vehiclePlate?: string | null;
   isActive: boolean;
@@ -119,6 +135,9 @@ export interface CreateBusinessInput {
   name: string;
   phone: string;
   address?: string;
+  email?: string;
+  passwordHash?: string;
+  location?: GeoPoint;
 }
 
 export interface CreateCourierInput {

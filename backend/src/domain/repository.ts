@@ -25,14 +25,8 @@ export interface DispatchRepository {
 
   getBusiness(businessId: string): Promise<Business | null>;
 
-  /**
-   * Usado por el flujo de WhatsApp: la primera vez que un número escribe,
-   * no hay un negocio pre-registrado detrás (no hay verificación de
-   * identidad en el MVP) — se crea uno mínimo con ese teléfono y el nombre
-   * que el solicitante dio por chat. Llamadas posteriores desde el mismo
-   * teléfono reutilizan el mismo negocio.
-   */
-  findOrCreateBusinessByPhone(phone: string, name: string): Promise<Business>;
+  /** Para el login: busca por email (case-insensitive, ya normalizado por `BusinessAuthService`), o `null` si no existe cuenta con ese email. */
+  getBusinessByEmail(email: string): Promise<Business | null>;
 
   createCourier(input: CreateCourierInput): Promise<Courier>;
 
