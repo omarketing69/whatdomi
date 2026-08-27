@@ -82,6 +82,17 @@ export interface DispatchRepository {
   forceAssignOrder(orderId: string, courierId: string): Promise<Order | null>;
 
   /**
+   * Pedido `ASSIGNED`/`IN_PROGRESS` que ya tiene este domiciliario, si
+   * tiene alguno (a lo sumo uno a la vez: `tryAssignOrder`/`forceAssignOrder`
+   * no dejan asignarle un segundo mientras el primero siga sin entregar).
+   * Usado por `DispatchService` para dar un error claro
+   * (`CourierBusyError`) en vez del genérico "el pedido ya no está
+   * disponible" cuando la verdadera causa es que el domiciliario está
+   * ocupado con otro servicio.
+   */
+  findActiveOrderForCourier(courierId: string): Promise<Order | null>;
+
+  /**
    * Fallback operativo para el tablero de administración: libera la
    * asignación actual (si la hay) y vuelve a poner el pedido en
    * `SEARCHING`, para que `DispatchService` reintente la búsqueda. No es

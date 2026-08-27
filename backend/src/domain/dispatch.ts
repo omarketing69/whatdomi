@@ -88,6 +88,20 @@ export class InvalidOrderStateError extends Error {
   }
 }
 
+/**
+ * El domiciliario ya tiene otro pedido `ASSIGNED`/`IN_PROGRESS` sin
+ * entregar — no puede tomar uno nuevo hasta cerrar el que tiene (ver
+ * `DispatchRepository.tryAssignOrder`/`forceAssignOrder`, que son quienes
+ * realmente garantizan esto de forma atómica; este error solo distingue
+ * la causa para quien llama).
+ */
+export class CourierBusyError extends Error {
+  constructor(courierId: string, public readonly activeOrderId: string) {
+    super(`El domiciliario ${courierId} ya tiene otro pedido en curso (${activeOrderId})`);
+    this.name = "CourierBusyError";
+  }
+}
+
 export interface DispatchServiceOptions {
   notifier?: DispatchNotifier;
   searchRadiusMeters?: number;
@@ -260,9 +274,7 @@ export class DispatchService {
     const assigned = await this.repo.tryAssignOrder(orderId, courierId);
 
     if (!assigned) {
-      const existing = await this.repo.getOrder(orderId);
-      if (!existing) throw new OrderNotFoundError(orderId);
-      throw new OrderAlreadyTakenError(orderId);
+      throw await this.resolveAssignmentFailure(orderId, courierId);
     }
 
     this.clearCascade(orderId);
@@ -324,13 +336,27 @@ export class DispatchService {
     const assigned = await this.repo.forceAssignOrder(orderId, courierId);
 
     if (!assigned) {
-      const existing = await this.repo.getOrder(orderId);
-      if (!existing) throw new OrderNotFoundError(orderId);
-      throw new OrderAlreadyTakenError(orderId);
+      throw await this.resolveAssignmentFailure(orderId, courierId);
     }
 
     this.notifier.onOrderAssigned(assigned, courierId);
     return assigned;
+  }
+
+  /**
+   * `tryAssignOrder`/`forceAssignOrder` devuelven `null` por dos razones
+   * posibles: el pedido ya no estaba disponible, o el domiciliario ya
+   * tiene otro pedido activo (ambas comprobaciones son atómicas del lado
+   * del repositorio, ver sus comentarios). Aquí solo se distingue cuál
+   * fue, para dar un error más útil a quien llame.
+   */
+  private async resolveAssignmentFailure(orderId: string, courierId: string): Promise<Error> {
+    const activeOrder = await this.repo.findActiveOrderForCourier(courierId);
+    if (activeOrder) return new CourierBusyError(courierId, activeOrder.id);
+
+    const existing = await this.repo.getOrder(orderId);
+    if (!existing) return new OrderNotFoundError(orderId);
+    return new OrderAlreadyTakenError(orderId);
   }
 
   private async searchAndOffer(

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
+  CourierBusyError,
   DispatchService,
   OrderAlreadyTakenError,
   OrderNotFoundError,
@@ -151,6 +152,9 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
         if (err instanceof OrderAlreadyTakenError) {
           return res.status(409).json({ error: err.message });
         }
+        if (err instanceof CourierBusyError) {
+          return res.status(409).json({ error: err.message, activeOrderId: err.activeOrderId });
+        }
         throw err;
       }
     })
@@ -235,6 +239,9 @@ export function createOrdersRouter(dispatch: DispatchService, repo: DispatchRepo
       } catch (err) {
         if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
         if (err instanceof OrderAlreadyTakenError) return res.status(409).json({ error: err.message });
+        if (err instanceof CourierBusyError) {
+          return res.status(409).json({ error: err.message, activeOrderId: err.activeOrderId });
+        }
         throw err;
       }
     })

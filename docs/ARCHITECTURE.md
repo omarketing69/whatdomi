@@ -197,6 +197,10 @@ garantía de fondo:
 UPDATE orders
 SET status = 'ASSIGNED', courier_id = $2, assigned_at = now()
 WHERE id = $1 AND status = 'SEARCHING' AND courier_id IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM orders o2
+    WHERE o2.courier_id = $2 AND o2.status IN ('ASSIGNED', 'IN_PROGRESS')
+  )
 RETURNING *;
 ```
 
@@ -207,6 +211,22 @@ primero y cambia el estado; cuando el segundo se ejecuta, la cláusula
 ninguna fila. La aplicación simplemente revisa si `RETURNING` trajo una fila
 o no — sin locks explícitos, sin transacciones manuales, sin necesidad de
 `SELECT ... FOR UPDATE`.
+
+**Un domiciliario nunca puede tener dos pedidos activos a la vez.** La
+condición `NOT EXISTS` de arriba es la garantía de fondo (y se repite,
+igual de atómica, en `forceAssignOrder` para la asignación manual del
+admin): si el domiciliario ya tiene otro pedido `ASSIGNED`/`IN_PROGRESS`
+sin entregar, la asignación simplemente no se aplica, sin importar por
+qué camino se intentó. Encima de esa garantía, `findActiveCouriersNear`
+(la búsqueda de candidatos) también lo excluye de antemano — así no se le
+ofrece siquiera un pedido que no podría tomar —, y `DispatchService`
+distingue el motivo del rechazo (`CourierBusyError` en vez del genérico
+"el pedido ya no está disponible") para dar un error más útil. Esto
+cerró un bug real: antes, `findActiveCouriersNear` solo filtraba por
+`is_active`, así que un domiciliario en camino con un pedido podía
+aparecer como candidato de un segundo pedido distinto y aceptarlo — el
+negocio dejaba de tener certeza de que su domiciliario asignado venía
+directo hacia ellos.
 
 Encima de esa garantía, `DispatchService.acceptOrder` agrega una capa: si
 hay una cascada viva para el pedido, solo el candidato al que le toca el

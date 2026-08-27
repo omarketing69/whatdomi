@@ -158,10 +158,11 @@ export interface CreateOrderInput {
   customerPhone?: string;
   notes?: string;
   /**
-   * `CREATED` (por defecto) es el pedido directo del formulario web: se
-   * busca domiciliario de inmediato. `QUOTED` es el usado por el flujo de
-   * WhatsApp: el pedido queda con una tarifa calculada, esperando que el
-   * solicitante confirme antes de buscar domiciliario (ver DispatchService).
+   * `CREATED` (por defecto) es el pedido directo, sin cotizar: se busca
+   * domiciliario de inmediato (primitivo interno, sin UI en el MVP —
+   * ver docs/ARCHITECTURE.md §2). `QUOTED` es el que usa el dashboard del
+   * negocio: el pedido queda con una tarifa calculada, esperando que el
+   * negocio confirme antes de buscar domiciliario (ver DispatchService).
    */
   initialStatus?: "CREATED" | "QUOTED";
   distanceMeters?: number;

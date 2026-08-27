@@ -319,11 +319,17 @@ export class PostgresDispatchRepository implements DispatchRepository {
   ): Promise<CourierWithDistance[]> {
     const { rows } = await this.pool.query<CourierRow & { distance_meters: number }>(
       `SELECT *, ST_Distance(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) AS distance_meters
-       FROM couriers
+       FROM couriers c
        WHERE is_active = true
          AND location IS NOT NULL
          AND ST_DWithin(location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
          AND NOT (id = ANY($4::uuid[]))
+         -- Un domiciliario con otro pedido ASSIGNED/IN_PROGRESS sin entregar
+         -- no es un candidato real: ya está comprometido con otro servicio.
+         AND NOT EXISTS (
+           SELECT 1 FROM orders o
+           WHERE o.courier_id = c.id AND o.status IN ('ASSIGNED', 'IN_PROGRESS')
+         )
        ORDER BY distance_meters ASC
        LIMIT $5`,
       [point.lng, point.lat, radiusMeters, excludeCourierIds, limit]
@@ -336,6 +342,14 @@ export class PostgresDispatchRepository implements DispatchRepository {
       `UPDATE orders
        SET status = 'ASSIGNED', courier_id = $2, assigned_at = now()
        WHERE id = $1 AND status = 'SEARCHING' AND courier_id IS NULL
+         -- Un domiciliario que ya tiene otro pedido ASSIGNED/IN_PROGRESS no
+         -- puede ganar uno nuevo: evita la doble asignación aunque se haya
+         -- colado como candidato (ver findActiveCouriersNear, que ya lo
+         -- filtra, pero esta es la garantía atómica de fondo).
+         AND NOT EXISTS (
+           SELECT 1 FROM orders o2
+           WHERE o2.courier_id = $2 AND o2.status IN ('ASSIGNED', 'IN_PROGRESS')
+         )
        RETURNING *`,
       [orderId, courierId]
     );
@@ -347,8 +361,20 @@ export class PostgresDispatchRepository implements DispatchRepository {
       `UPDATE orders
        SET status = 'ASSIGNED', courier_id = $2, assigned_at = now()
        WHERE id = $1 AND status = 'UNASSIGNED' AND courier_id IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM orders o2
+           WHERE o2.courier_id = $2 AND o2.status IN ('ASSIGNED', 'IN_PROGRESS')
+         )
        RETURNING *`,
       [orderId, courierId]
+    );
+    return rows[0] ? mapOrder(rows[0]) : null;
+  }
+
+  async findActiveOrderForCourier(courierId: string): Promise<Order | null> {
+    const { rows } = await this.pool.query<OrderRow>(
+      `SELECT * FROM orders WHERE courier_id = $1 AND status IN ('ASSIGNED', 'IN_PROGRESS') LIMIT 1`,
+      [courierId]
     );
     return rows[0] ? mapOrder(rows[0]) : null;
   }

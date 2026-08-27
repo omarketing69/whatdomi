@@ -185,12 +185,20 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     excludeCourierIds: string[] = []
   ): Promise<CourierWithDistance[]> {
     const excluded = new Set(excludeCourierIds);
+    const busyCourierIds = new Set(
+      Array.from(this.orders.values())
+        .filter((order) => order.courierId && (order.status === "ASSIGNED" || order.status === "IN_PROGRESS"))
+        .map((order) => order.courierId as string)
+    );
     const withDistance: CourierWithDistance[] = [];
 
     for (const courier of this.couriers.values()) {
       if (!courier.isActive) continue;
       if (courier.lat === null || courier.lng === null) continue;
       if (excluded.has(courier.id)) continue;
+      // Un domiciliario con otro pedido ASSIGNED/IN_PROGRESS sin entregar no
+      // es un candidato real: ya está comprometido con otro servicio.
+      if (busyCourierIds.has(courier.id)) continue;
 
       const distanceMeters = haversineDistanceMeters(point, {
         lat: courier.lat,
@@ -205,6 +213,16 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     return withDistance.slice(0, limit);
   }
 
+  /** Un domiciliario con otro pedido ASSIGNED/IN_PROGRESS ya no es candidato para uno nuevo. */
+  private isCourierBusy(courierId: string): boolean {
+    for (const order of this.orders.values()) {
+      if (order.courierId === courierId && (order.status === "ASSIGNED" || order.status === "IN_PROGRESS")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async tryAssignOrder(orderId: string, courierId: string): Promise<Order | null> {
     // Simula la latencia de una consulta real a la base de datos, para que
     // dos llamadas "simultáneas" puedan intercalarse antes de escribir.
@@ -213,9 +231,10 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     const order = this.orders.get(orderId);
     if (!order) return null;
     // Compare-and-swap: solo gana quien encuentra el pedido todavía en
-    // SEARCHING y sin domiciliario. Esta comprobación + escritura ocurre
-    // sin ningún `await` en medio, así que es la sección atómica.
-    if (order.status !== "SEARCHING" || order.courierId !== null) {
+    // SEARCHING y sin domiciliario, y no tiene ya otro pedido activo sin
+    // entregar. Esta comprobación + escritura ocurre sin ningún `await` en
+    // medio, así que es la sección atómica.
+    if (order.status !== "SEARCHING" || order.courierId !== null || this.isCourierBusy(courierId)) {
       return null;
     }
 
@@ -233,7 +252,7 @@ export class InMemoryDispatchRepository implements DispatchRepository {
   async forceAssignOrder(orderId: string, courierId: string): Promise<Order | null> {
     const order = this.orders.get(orderId);
     if (!order) return null;
-    if (order.status !== "UNASSIGNED" || order.courierId !== null) return null;
+    if (order.status !== "UNASSIGNED" || order.courierId !== null || this.isCourierBusy(courierId)) return null;
 
     const updated: Order = {
       ...order,
@@ -244,6 +263,15 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     };
     this.orders.set(orderId, updated);
     return { ...updated };
+  }
+
+  async findActiveOrderForCourier(courierId: string): Promise<Order | null> {
+    for (const order of this.orders.values()) {
+      if (order.courierId === courierId && (order.status === "ASSIGNED" || order.status === "IN_PROGRESS")) {
+        return { ...order };
+      }
+    }
+    return null;
   }
 
   async unassignOrder(orderId: string): Promise<Order | null> {
