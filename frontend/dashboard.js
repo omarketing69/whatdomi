@@ -77,6 +77,35 @@ const mapHint = document.getElementById("map-hint");
 let currentOrderId = null;
 let orderPollTimer = null;
 
+/**
+ * `currentOrderId` solo vive en esta variable de JS: un refresh de la
+ * página (F5, cerrar y volver a abrir la pestaña) lo perdía sin ninguna
+ * forma de recuperar el pedido en curso, aunque el pedido siguiera activo
+ * del lado del servidor. Al cargar el dashboard, se pregunta si el
+ * negocio tiene un pedido no terminado y, si lo tiene, se reconstruye la
+ * vista correspondiente en vez de arrancar siempre en el estado inicial.
+ */
+async function restoreActiveOrder() {
+  try {
+    const { order, quote } = await apiFetch("/api/business/orders/active");
+    if (!order) return;
+
+    currentOrderId = order.id;
+    bigRequestBtn.hidden = true;
+
+    if (order.status === "QUOTED") {
+      showQuote(order, quote ?? { distanceKm: (order.distanceMeters ?? 0) / 1000, fare: order.fare, currency: order.currency });
+      return;
+    }
+
+    startTracking(order);
+  } catch {
+    // Si la recuperación falla por lo que sea, se deja la vista inicial normal en vez de trabar el dashboard.
+  }
+}
+
+restoreActiveOrder();
+
 overridePickupCheck.addEventListener("change", () => {
   overridePickupLabel.hidden = !overridePickupCheck.checked;
 });

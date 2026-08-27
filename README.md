@@ -118,7 +118,9 @@ npx serve .              # o: python3 -m http.server 5173
 - `index.html` — login/registro del negocio.
 - `dashboard.html` — dashboard del negocio: botón "Pedir domiciliario"
   (cotiza → confirma), mapa en vivo, y estado del pedido con los datos
-  del domiciliario asignado una vez lo tiene.
+  del domiciliario asignado una vez lo tiene. Sobrevive un refresh de la
+  página: al cargar, recupera el pedido en curso (si tiene uno) vía
+  `GET /api/business/orders/active` en vez de volver siempre al estado inicial.
 - `admin.html` — panel del admin: configuración de tarifa/comisión,
   liquidaciones y registro de servicios por día, estadísticas, y monitoreo
   de pedidos en vivo (reasignar/cancelar). Pide la `X-Admin-Key` si el
@@ -275,6 +277,7 @@ funcionalidad, incluida la validación en navegador con Playwright).
 | POST | `/api/auth/register` | Registrar el negocio (email/contraseña + dirección → punto de recogida por defecto); devuelve un token JWT |
 | POST | `/api/auth/login` | Login del negocio; devuelve un token JWT |
 | GET | `/api/auth/me` | Perfil del negocio autenticado (requiere `Authorization: Bearer <token>`) |
+| GET | `/api/business/orders/active` | Pedido no terminado más reciente del negocio autenticado (`{"order":null}` si no tiene ninguno) — el dashboard lo usa al cargar la página para recuperar el pedido en curso tras un refresh |
 | POST | `/api/business/orders/quote` | Cotizar un pedido (autenticado): recogida = ubicación registrada del negocio salvo que se sobreescriba, entrega en texto libre; `merchandiseValue`/`paymentMode` opcionales |
 | POST | `/api/business/orders/:id/confirm` | Confirmar la cotización propia (autenticado, `403` si el pedido es de otro negocio) — arranca la cascada de asignación |
 | POST | `/api/couriers` | Registrar un domiciliario (nombre, teléfono de contacto, `nationalId`/cédula, placa) |

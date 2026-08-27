@@ -180,6 +180,13 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     return all.slice(0, limit).map((order) => ({ ...order }));
   }
 
+  async findActiveOrderForBusiness(businessId: string): Promise<Order | null> {
+    const active = Array.from(this.orders.values())
+      .filter((order) => order.businessId === businessId && order.status !== "DELIVERED" && order.status !== "CANCELLED")
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return active[0] ? { ...active[0] } : null;
+  }
+
   async findActiveCouriersNear(
     point: GeoPoint,
     radiusMeters: number,

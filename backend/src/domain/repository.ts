@@ -48,6 +48,18 @@ export interface DispatchRepository {
   listOrders(filter?: { statuses?: OrderStatus[]; limit?: number }): Promise<Order[]>;
 
   /**
+   * Pedido no terminal (cualquier estado salvo `DELIVERED`/`CANCELLED`)
+   * más reciente de este negocio, o `null` si no tiene ninguno — usado
+   * por el dashboard para reconstruir su vista al cargar la página
+   * (`currentOrderId` solo vive en memoria del navegador, se pierde con
+   * un refresh). Si hubiera más de uno activo a la vez, cualquier
+   * implementación puede devolver el más reciente sin que eso sea una
+   * garantía del contrato (en la práctica un negocio no debería tener más
+   * de uno en curso, pero el repositorio no lo impone).
+   */
+  findActiveOrderForBusiness(businessId: string): Promise<Order | null>;
+
+  /**
    * Devuelve domiciliarios activos ordenados por cercanía al punto dado,
    * dentro de un radio máximo. `excludeCourierIds` permite no volver a
    * ofrecer el pedido a quien ya lo rechazó.

@@ -318,6 +318,17 @@ export class PostgresDispatchRepository implements DispatchRepository {
     return rows.map(mapOrder);
   }
 
+  async findActiveOrderForBusiness(businessId: string): Promise<Order | null> {
+    const { rows } = await this.pool.query<OrderRow>(
+      `SELECT * FROM orders
+       WHERE business_id = $1 AND status NOT IN ('DELIVERED', 'CANCELLED')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [businessId]
+    );
+    return rows[0] ? mapOrder(rows[0]) : null;
+  }
+
   async findActiveCouriersNear(
     point: GeoPoint,
     radiusMeters: number,

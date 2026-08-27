@@ -52,6 +52,33 @@ export function createBusinessOrdersRouter(
   const router = Router();
   router.use(requireBusinessAuth(tokens));
 
+  /**
+   * Para que el dashboard reconstruya su vista al cargar la página:
+   * `currentOrderId` solo vivía en una variable de JS en memoria del
+   * navegador, así que un refresh (F5, cerrar la pestaña, que se caiga el
+   * navegador) lo perdía sin ninguna forma de recuperar el pedido en
+   * curso. Devuelve `{ order: null }` si el negocio no tiene ningún
+   * pedido no terminado en este momento.
+   */
+  router.get(
+    "/active",
+    asyncHandler(async (req, res) => {
+      const businessId = (req as AuthedRequest).businessId;
+      const order = await repo.findActiveOrderForBusiness(businessId);
+      if (!order) return res.json({ order: null });
+
+      // El dashboard, para el estado QUOTED, necesita el mismo objeto
+      // "quote" que ya le devuelve /quote — se reconstruye a partir de
+      // los campos que ya quedaron guardados en el pedido al cotizarlo.
+      const quote =
+        order.distanceMeters !== null && order.fare !== null
+          ? { distanceMeters: order.distanceMeters, distanceKm: order.distanceMeters / 1000, fare: order.fare, currency: order.currency }
+          : null;
+
+      return res.json({ order, quote });
+    })
+  );
+
   router.post(
     "/quote",
     asyncHandler(async (req, res) => {
