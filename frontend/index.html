@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>WhatDomi - Pedir domiciliario</title>
     <link rel="stylesheet" href="styles.css" />
+    <!-- Leaflet vendorizado localmente (frontend/vendor/leaflet) en vez de un CDN: el
+         negocio objetivo son ciudades pequeñas con conexiones modestas, y así el mapa
+         no depende de que un tercero externo esté disponible en cada carga. -->
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+    <style>
+      #map {
+        height: 280px;
+        border-radius: 8px;
+        margin-top: 0.75rem;
+        border: 1px solid var(--border);
+      }
+    </style>
   </head>
   <body>
     <header>
@@ -60,6 +72,12 @@
             <button type="button" id="use-my-location">Usar mi ubicación actual</button>
           </fieldset>
 
+          <div id="map"></div>
+          <p class="hint" id="map-hint">
+            Puntos = domiciliarios activos cerca de la recogida. Una vez asignado, se muestra su
+            trayecto en línea recta hacia el punto de recogida (no es una ruta real por calles).
+          </p>
+
           <fieldset>
             <legend>Entrega</legend>
             <label>
@@ -104,6 +122,7 @@
       </section>
     </main>
 
+    <script src="vendor/leaflet/leaflet.js"></script>
     <script>
       // Cambia esta URL si el backend corre en otro host/puerto (por ejemplo, en producción).
       window.WHATDOMI_API_URL = window.WHATDOMI_API_URL || "http://localhost:3000";

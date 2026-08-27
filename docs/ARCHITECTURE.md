@@ -94,7 +94,7 @@ comentario ahí para el detalle):
   dinero de la plataforma (tarifas, comisión, cuánto le debe cada
   domiciliario), así que necesita algo más que "no hay verificación" —
   pero un login completo (usuario/contraseña, sesiones) es más de lo que
-  un MVP de un solo operador necesita. Ver §11 para cómo evolucionar esto.
+  un MVP de un solo operador necesita. Ver §12 para cómo evolucionar esto.
 - **Business** (negocio): quien solicita domicilios. Nombre, teléfono,
   dirección. Por WhatsApp se crea automáticamente la primera vez que un
   número escribe (no hay registro previo ni verificación de identidad).
@@ -122,7 +122,7 @@ monetización (ver §6-7):
 - **Order** (pedido/solicitud de domicilio): negocio, nombre del
   solicitante, punto de recogida, punto de entrega, distancia, tarifa,
   moneda, `status`, domiciliario asignado, y `paymentLink`/`paymentStatus`
-  (sin usar todavía, ver §10).
+  (sin usar todavía, ver §11).
 
 Ciclo de vida de un pedido (`OrderStatus`):
 
@@ -153,8 +153,9 @@ búsqueda/notificación de candidatos vía `searchAndOffer`).
 | Acceso a datos     | `pg` (node-postgres) con SQL crudo        | Se evitó un ORM (ej. Prisma) para no depender de la descarga de binarios de motor en tiempo de build/CI, que puede fallar en entornos con red restringida. El dominio está detrás de una interfaz (`DispatchRepository`), así que cambiar a un ORM más adelante es un cambio localizado. |
 | Tiempo real        | Socket.io                                 | Notificar domiciliarios candidatos y actualizar el estado del pedido sin polling agresivo. El tablero admin sí usa polling HTTP corto, por simplicidad — no necesita la latencia de un socket para una vista de monitoreo. |
 | Geocodificación    | LLM (normaliza texto) + Nominatim/OSM (resuelve coordenadas) | Ver §5: separar "entender la dirección informal" de "resolver coordenadas reales" en dos pasos, en vez de pedirle coordenadas a un LLM directamente. |
-| WhatsApp           | Flujo conversacional propio sobre un webhook compatible con Meta Cloud API (ver §9) | Sin credenciales reales todavía, pero toda la lógica de negocio (estado de la conversación, cotización, confirmación) ya está implementada y probada; solo falta conectar el envío/recepción real. |
+| WhatsApp           | Flujo conversacional propio sobre un webhook compatible con Meta Cloud API (ver §10) | Sin credenciales reales todavía, pero toda la lógica de negocio (estado de la conversación, cotización, confirmación) ya está implementada y probada; solo falta conectar el envío/recepción real. |
 | Frontend           | HTML/CSS/JS plano, sin build              | Tres páginas simples (formulario de negocio, tablero admin, PWA de domiciliario) no justifican un framework ni un paso de build. |
+| Mapa               | Leaflet + tiles de OpenStreetMap, vendorizados localmente (ver §9) | Gratis y sin API key, misma lógica que ya llevó a elegir Nominatim para geocodificar; vendorizado (no CDN) para no depender de un tercero externo en cada carga. |
 | PWA del domiciliario | Web App Manifest + Service Worker mínimo | El mercado objetivo son ciudades pequeñas con celulares de gama baja: una PWA instalable evita la fricción (y el costo de distribución) de una app nativa. |
 | Tests              | Vitest sobre un repositorio en memoria    | La lógica de asignación, el flujo conversacional y la geocodificación se prueban sin depender de una base de datos ni de red real. |
 
@@ -208,7 +209,7 @@ el pedido siga en `SEARCHING`. Es una comprobación en memoria, no en la
 base de datos: si el proceso se reinicia y la cascada en memoria se
 pierde, `acceptOrder` se degrada al comportamiento atómico simple (gana
 quien primero llegue), en vez de dejar el pedido inaceptable para
-siempre — ver §11 sobre qué le falta a esto para un despliegue con más de
+siempre — ver §12 sobre qué le falta a esto para un despliegue con más de
 una instancia.
 
 Esta misma lógica de asignación atómica se implementó en el repositorio en
@@ -374,7 +375,65 @@ capacidades, todas detrás de `requireAdminKey`:
    aproximación para una vista rápida — el monto "oficial" por día es el
    que quedó congelado en cada `CourierSettlement`, no este agregado).
 
-## 9. Integración con WhatsApp: opciones y recomendación
+## 9. Mapa en vivo del negocio: Leaflet + OpenStreetMap
+
+`frontend/index.html` muestra un mapa en cuanto el negocio completa el
+punto de recogida: domiciliarios activos cerca (puntos verdes,
+`GET /api/couriers/nearby`) antes de asignar, y la posición del
+domiciliario asignado con una línea hacia la recogida
+(`GET /api/orders/:id/courier-location`) después — ambos con polling cada
+~4s, no WebSocket, porque es una vista de solo lectura de baja frecuencia
+donde el polling ya es simple y suficiente (el mismo patrón que usa el
+tablero de admin).
+
+**Por qué Leaflet + OpenStreetMap y no Google Maps/Mapbox**: el público
+son ciudades pequeñas de LatAm, donde cuidar el costo operativo es una
+prioridad explícita del producto — Leaflet es gratis y sin límite de uso,
+y OSM no requiere una API key ni tarjeta de crédito, igual que Nominatim
+(ya elegido para geocodificar direcciones en el flujo de WhatsApp, ver
+§5). Es la misma decisión de fondo aplicada dos veces: evitar depender de
+un proveedor de pago para un producto que necesita mantenerse barato de
+operar.
+
+**Por qué vendorizado localmente y no un CDN** (`frontend/vendor/leaflet/`,
+no `unpkg.com` ni similar): al construir esto se detectó un bug real
+probándolo en un entorno con el CDN bloqueado — como el código inicial
+creaba los íconos de Leaflet (`new L.DivIcon(...)`) en la parte superior
+del script, si `L` no estaba definido (porque el CDN no cargó), **todo**
+`app.js` fallaba con un `ReferenceError` sin ejecutar una sola línea más:
+ni siquiera el registro del negocio funcionaba, muy lejos de "solo el mapa
+no carga". La causa de fondo no era el CDN en sí, sino que nada dependía
+de verificar si Leaflet había cargado. Se corrigió en dos frentes:
+1. Vendorizar Leaflet (JS + CSS + íconos, ~190KB) como archivos locales,
+   para no depender de que un tercero externo esté disponible en cada
+   carga — más robusto para el público objetivo (conexiones modestas).
+2. Guardas defensivas en `app.js` (`mapAvailable = typeof L !== "undefined"`):
+   si por lo que sea Leaflet no carga, el mapa se omite en silencio y el
+   resto de la página (registrar negocio, pedir domicilio, seguir el
+   estado) sigue funcionando exactamente igual. El mapa es una mejora de
+   experiencia, nunca una dependencia del flujo de negocio.
+
+**Limitación deliberada**: la línea hacia la recogida es la distancia en
+**línea recta** (Haversine, la misma que ya se usa para tarifa y
+cercanía), no una ruta real por calles — no hay integración con un
+servicio de ruteo (OSRM, Mapbox Directions) en este MVP. Es la misma
+decisión de simplicidad que ya se tomó para la distancia de la tarifa
+(§6): un MVP no necesita ruteo real para ser útil, y agregar ruteo real
+es un cambio localizado a futuro (solo tocaría cómo se dibuja la línea,
+no el resto del sistema).
+
+Esta funcionalidad se probó manualmente en un navegador real (Playwright +
+Chromium) contra un backend con el repositorio en memoria: registro de
+negocio, aparición del punto de recogida y de un domiciliario sembrado
+cerca, creación del pedido, aceptación simulada del domiciliario, y
+verificación de que aparecen el marcador rojo y la línea de trayecto. Los
+tiles de mapa en sí (`tile.openstreetmap.org`) no cargaron en ese entorno
+de prueba por una política de red del sandbox — no un defecto del código —
+así que las capturas muestran los marcadores sobre un fondo gris en vez de
+calles reales; en un despliegue con acceso normal a internet, los tiles
+cargan igual que cualquier imagen de una página web.
+
+## 10. Integración con WhatsApp: opciones y recomendación
 
 No había credenciales de WhatsApp Business al momento de construir el MVP.
 Lo que sí se construyó y está probado end-to-end es toda la lógica de
@@ -414,7 +473,7 @@ Pendiente de implementar en cuanto haya credenciales:
   Postgres en vez de en memoria, para que sobreviva reinicios y funcione
   con más de una instancia del backend corriendo a la vez.
 
-## 10. Fuera de alcance en este MVP
+## 11. Fuera de alcance en este MVP
 
 - **Pagos**: tanto el cobro del servicio (negocio → domiciliario) como el
   pago de la comisión (domiciliario → plataforma) se manejan
@@ -431,14 +490,18 @@ Pendiente de implementar en cuanto haya credenciales:
   activan (¿por horario del servidor? ¿por zona geográfica del punto de
   recogida?), que quedó fuera del alcance de este ajuste.
 - **Verificación de identidad real de negocio y domiciliario**: ni el
-  solicitante (un nombre por chat, sin cuenta) ni el domiciliario (código
-  de activación simple, ver §7) pasan por un mecanismo de autenticación
-  fuerte. Es una decisión de producto deliberada para mantener el costo
-  operativo bajo en el mercado objetivo, no un descuido. El admin sí tiene
-  una barrera (`ADMIN_API_KEY`), pero tampoco es un login completo — ver
-  el siguiente punto.
+  solicitante (un nombre por chat, sin cuenta) ni el domiciliario (su
+  cédula, sin verificarla contra ninguna fuente oficial, ver §7) pasan por
+  un mecanismo de autenticación fuerte. Es una decisión de producto
+  deliberada para mantener el costo operativo bajo en el mercado objetivo,
+  no un descuido. El admin sí tiene una barrera (`ADMIN_API_KEY`), pero
+  tampoco es un login completo — ver el siguiente punto.
+- **Ruteo real en el mapa**: el trayecto del domiciliario hacia la
+  recogida (§9) se dibuja en línea recta, no por una ruta real de calles —
+  misma simplificación que ya se aplica a la distancia usada para la
+  tarifa (§6).
 
-## 11. Consideraciones para producción (fuera del alcance del MVP)
+## 12. Consideraciones para producción (fuera del alcance del MVP)
 
 - **Autenticación/autorización real para los 3 roles**: hoy el admin se
   protege con una clave compartida por cabecera (suficiente para un solo
@@ -468,5 +531,7 @@ Pendiente de implementar en cuanto haya credenciales:
 - **Migraciones versionadas**: `db/schema.sql` es suficiente para el MVP;
   con más de un cambio de esquema conviene una herramienta de migraciones
   (ej. `node-pg-migrate`) para no reescribir el archivo a mano.
-- **Ruteo real**: la distancia hoy es línea recta (Haversine); para tarifas
-  más precisas conviene una API de ruteo (OSRM propio, Mapbox Directions).
+- **Ruteo real**: la distancia hoy es línea recta (Haversine) tanto para
+  la tarifa como para la línea del mapa hacia la recogida (§9); para
+  tarifas más precisas y un trayecto real por calles conviene una API de
+  ruteo (OSRM propio, Mapbox Directions).

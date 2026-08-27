@@ -177,6 +177,25 @@ export class DispatchService {
   }
 
   /**
+   * Ubicación en vivo del domiciliario asignado a un pedido, para el mapa
+   * de seguimiento del negocio (ver frontend/index.html). Devuelve
+   * únicamente lat/lng — nunca el teléfono ni la cédula del domiciliario,
+   * que no son asunto del negocio hasta que WhatsApp se los entregue
+   * explícitamente al asignarse (ver `whatsapp/notifier.ts`).
+   */
+  async getCourierLocation(
+    orderId: string
+  ): Promise<{ lat: number; lng: number; lastSeenAt: Date | null } | null> {
+    const order = await this.repo.getOrder(orderId);
+    if (!order?.courierId) return null;
+
+    const courier = await this.repo.getCourier(order.courierId);
+    if (!courier || courier.lat === null || courier.lng === null) return null;
+
+    return { lat: courier.lat, lng: courier.lng, lastSeenAt: courier.lastSeenAt };
+  }
+
+  /**
    * Un domiciliario intenta aceptar un pedido ofrecido. En el modelo de
    * cascada, solo el candidato al que le toca el turno ahora mismo puede
    * intentarlo (si hay una cascada viva para este pedido en memoria); si

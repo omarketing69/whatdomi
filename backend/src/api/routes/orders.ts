@@ -94,6 +94,20 @@ export function createOrdersRouter(dispatch: DispatchService): Router {
     })
   );
 
+  /**
+   * Para el mapa de seguimiento del negocio: ubicación en vivo del
+   * domiciliario ya asignado a este pedido (null si todavía no hay
+   * ninguno). Deliberadamente no devuelve el pedido completo ni datos del
+   * domiciliario más allá de su posición.
+   */
+  router.get(
+    "/:orderId/courier-location",
+    asyncHandler(async (req, res) => {
+      const location = await dispatch.getCourierLocation(req.params.orderId);
+      return res.json({ location });
+    })
+  );
+
   router.post(
     "/:orderId/accept",
     asyncHandler(async (req, res) => {

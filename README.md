@@ -14,8 +14,9 @@ le ofrece automáticamente al siguiente más cercano, y así sucesivamente
 nombre, la placa y el teléfono del domiciliario asignado. Si nadie acepta
 a tiempo, el pedido queda para que un admin lo asigne a mano, como último
 recurso. También existe un formulario web directo como alternativa a
-WhatsApp, y un panel de administración con configuración de tarifas,
-liquidaciones, y monitoreo.
+WhatsApp — con un **mapa en vivo** de domiciliarios cercanos y, una vez
+asignado, del trayecto del domiciliario hacia la recogida — y un panel de
+administración con configuración de tarifas, liquidaciones, y monitoreo.
 
 Para el diseño técnico completo (diagrama, decisiones de stack, cómo se
 resuelve la condición de carrera de la asignación, por qué la
@@ -42,9 +43,10 @@ ver `docs/ARCHITECTURE.md` §2.
 whatdomi/
 ├── backend/            API (Node.js + TypeScript + Express + Postgres/PostGIS)
 ├── frontend/
-│   ├── index.html       Formulario web directo (alternativa a WhatsApp)
-│   ├── admin.html        Tablero de administración (monitoreo + reasignar/cancelar)
-│   └── courier/           PWA del domiciliario (activación, ubicación, ofertas)
+│   ├── index.html       Formulario web directo (alternativa a WhatsApp) + mapa en vivo
+│   ├── admin.html        Tablero de administración (monitoreo + reasignar/cancelar/asignar)
+│   ├── courier/           PWA del domiciliario (activación, ubicación, ofertas)
+│   └── vendor/leaflet/    Leaflet vendorizado localmente (no un CDN) para el mapa
 ├── docs/                Documentación de arquitectura
 └── docker-compose.yml    Postgres + PostGIS para desarrollo local
 ```
@@ -202,6 +204,24 @@ Solo el candidato al que le toca el turno puede aceptar en un momento dado
 asignación en sí sigue resolviéndose con la misma operación atómica de
 base de datos que antes — ver `docs/ARCHITECTURE.md` §4.
 
+## Mapa en vivo (formulario web del negocio)
+
+`frontend/index.html` muestra un mapa (Leaflet + tiles de OpenStreetMap,
+**vendorizados localmente** en `frontend/vendor/leaflet` — no un CDN, para
+no depender de que un tercero externo esté disponible en cada carga) en
+cuanto el negocio completa el punto de recogida:
+
+- **Antes de asignar**: puntos verdes con los domiciliarios activos cerca
+  de la recogida (`GET /api/couriers/nearby`), actualizados cada ~4s.
+- **Después de asignar**: un punto rojo con la posición del domiciliario
+  asignado y una línea hacia el punto de recogida, también actualizada
+  cada ~4s (`GET /api/orders/:id/courier-location`).
+
+**Limitación deliberada**: la línea es la distancia en línea recta, no una
+ruta real por calles — no hay integración con un servicio de ruteo en este
+MVP (ver `docs/ARCHITECTURE.md` §9 para cómo se documentó y probó esta
+funcionalidad, incluida la validación en navegador con Playwright).
+
 ## API (resumen)
 
 | Método | Ruta | Descripción |
@@ -211,9 +231,11 @@ base de datos que antes — ver `docs/ARCHITECTURE.md` §4.
 | POST | `/api/couriers/:id/activate` | Activarse con la cédula (`402` si tiene comisión pendiente de días anteriores) |
 | POST | `/api/couriers/:id/deactivate` | Desactivarse (sin necesitar la cédula) |
 | POST | `/api/couriers/:id/location` | Reportar ubicación en vivo |
+| GET | `/api/couriers/nearby?lat=&lng=&radiusMeters=` | Domiciliarios activos cerca de un punto (para el mapa; sin teléfono ni cédula) |
 | POST | `/api/orders` | Crear una solicitud de domicilio directa (arranca la cascada de asignación) |
 | GET | `/api/orders` | Listar pedidos, opcional `?status=SEARCHING,ASSIGNED,UNASSIGNED,...` (tablero de administración) |
 | GET | `/api/orders/:id` | Consultar estado de un pedido |
+| GET | `/api/orders/:id/courier-location` | Ubicación en vivo del domiciliario ya asignado a este pedido (para el mapa; `{"location":null}` si aún no hay ninguno) |
 | POST | `/api/orders/:id/accept` | El domiciliario al que le toca el turno acepta el pedido (`409` si no es su turno o ya no está disponible) |
 | POST | `/api/orders/:id/picked-up` | Marcar como recogido / en curso |
 | POST | `/api/orders/:id/delivered` | Marcar como entregado |
