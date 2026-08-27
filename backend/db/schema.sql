@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS orders (
   distance_meters    DOUBLE PRECISION,
   fare               NUMERIC(12, 2),
   currency           TEXT,
+  -- Valor de la mercancía/pedido (aparte de la tarifa del domicilio) y
+  -- cómo se cobra, ambos opcionales y elegidos por pedido -- costumbre que
+  -- varía por negocio, ver docs/ARCHITECTURE.md §6. Es dinero de paso: NO
+  -- cuenta para la comisión de la plataforma, que sigue siendo solo sobre
+  -- `fare` (ver SettlementService.recomputeSettlement).
+  merchandise_value  NUMERIC(12, 2),
+  payment_mode       TEXT,
   -- Sin pagos integrados en el MVP (se maneja manual/offline); estos campos
   -- solo dejan el espacio listo para conectar una pasarela más adelante.
   payment_link       TEXT,

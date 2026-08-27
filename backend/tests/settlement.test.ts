@@ -6,7 +6,8 @@ async function deliverOrder(
   repo: InMemoryDispatchRepository,
   courierId: string,
   fare: number,
-  deliveredAt: Date
+  deliveredAt: Date,
+  extra?: { merchandiseValue?: number; paymentMode?: "DIRECT_TO_BUSINESS" | "BUSINESS_REIMBURSES_COURIER" | "COURIER_COLLECTS_ON_DELIVERY" }
 ) {
   const business = await repo.createBusiness({ name: "Negocio", phone: `+57300${Math.random()}` });
   const order = await repo.createOrder({
@@ -17,6 +18,8 @@ async function deliverOrder(
     dropoffAddress: "B",
     fare,
     currency: "COP",
+    merchandiseValue: extra?.merchandiseValue,
+    paymentMode: extra?.paymentMode,
   });
   await repo.updateOrderStatus(order.id, "SEARCHING");
   await repo.tryAssignOrder(order.id, courierId);
@@ -43,6 +46,29 @@ describe("SettlementService.recomputeSettlement", () => {
     expect(settlement.commissionPercentage).toBe(10);
     expect(settlement.commissionAmount).toBe(1200);
     expect(settlement.status).toBe("PENDING");
+  });
+
+  it("la comisión se calcula solo sobre la tarifa del domicilio, nunca sobre el valor de la mercancía", async () => {
+    const repo = new InMemoryDispatchRepository();
+    await repo.updatePlatformConfig({ commissionPercentage: 10 });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000011", nationalId: "573000000011" });
+
+    // Mercancía de valor alto no debe inflar totalEarned ni la comisión —
+    // es dinero de paso, no ingreso del domiciliario ni de la plataforma.
+    await deliverOrder(repo, courier.id, 5000, new Date("2026-01-10T12:00:00Z"), {
+      merchandiseValue: 200_000,
+      paymentMode: "COURIER_COLLECTS_ON_DELIVERY",
+    });
+    await deliverOrder(repo, courier.id, 7000, new Date("2026-01-10T18:00:00Z"), {
+      merchandiseValue: 50_000,
+      paymentMode: "BUSINESS_REIMBURSES_COURIER",
+    });
+
+    const service = new SettlementService(repo);
+    const settlement = await service.recomputeSettlement(courier.id, "2026-01-10");
+
+    expect(settlement.totalEarned).toBe(12_000); // 5000 + 7000, no incluye mercancía
+    expect(settlement.commissionAmount).toBe(1200); // 10% de 12000, no de 262000
   });
 
   it("congela la liquidación una vez pagada: entregas tardías del mismo día no la reabren", async () => {

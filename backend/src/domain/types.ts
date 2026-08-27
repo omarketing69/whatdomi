@@ -101,6 +101,21 @@ export interface Courier {
   createdAt: Date;
 }
 
+/**
+ * Cómo se maneja el cobro del **valor de la mercancía** (la comida/producto
+ * en sí, aparte de la tarifa del domicilio) — costumbre que varía por
+ * negocio, así que es opcional y se elige por pedido, nunca un modelo
+ * único fijo. Ver `Order.merchandiseValue`/`paymentMode` y
+ * `docs/ARCHITECTURE.md` §6 para el detalle de cada escenario.
+ */
+export type PaymentMode =
+  /** El cliente le paga la mercancía directamente al negocio (o no aplica cobro de mercancía). El domiciliario no maneja ese dinero. */
+  | "DIRECT_TO_BUSINESS"
+  /** El cliente le paga/transfiere todo al negocio; el negocio le reembolsa al domiciliario su servicio por fuera del sistema. */
+  | "BUSINESS_REIMBURSES_COURIER"
+  /** El domiciliario paga la mercancía al negocio al recogerla, y cobra mercancía + servicio al cliente al entregar. */
+  | "COURIER_COLLECTS_ON_DELIVERY";
+
 export interface Order {
   id: string;
   businessId: string;
@@ -118,6 +133,15 @@ export interface Order {
   distanceMeters: number | null;
   fare: number | null;
   currency: string | null;
+  /**
+   * Valor de la mercancía/pedido (la comida o producto en sí), opcional —
+   * `null` si no aplica. Es dinero de paso entre negocio/cliente/
+   * domiciliario: nunca cuenta para la comisión de la plataforma, que se
+   * calcula solo sobre `fare` (ver `SettlementService.recomputeSettlement`).
+   */
+  merchandiseValue: number | null;
+  /** Modalidad de cobro de esa mercancía, ver `PaymentMode`. `null` = no aplica (equivalente a `DIRECT_TO_BUSINESS`). */
+  paymentMode: PaymentMode | null;
   paymentLink: string | null;
   paymentStatus: PaymentStatus | null;
   createdAt: Date;
@@ -168,6 +192,9 @@ export interface CreateOrderInput {
   distanceMeters?: number;
   fare?: number;
   currency?: string;
+  /** Ver `Order.merchandiseValue`/`paymentMode` — ambos opcionales, sin relación con la comisión de la plataforma. */
+  merchandiseValue?: number;
+  paymentMode?: PaymentMode;
 }
 
 /**

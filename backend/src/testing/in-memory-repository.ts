@@ -145,6 +145,8 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       distanceMeters: input.distanceMeters ?? null,
       fare: input.fare ?? null,
       currency: input.currency ?? null,
+      merchandiseValue: input.merchandiseValue ?? null,
+      paymentMode: input.paymentMode ?? null,
       paymentLink: null,
       paymentStatus: null,
       createdAt: now,

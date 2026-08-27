@@ -15,6 +15,8 @@ const geoPointSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
+const PAYMENT_MODES = ["DIRECT_TO_BUSINESS", "BUSINESS_REIMBURSES_COURIER", "COURIER_COLLECTS_ON_DELIVERY"] as const;
+
 const createOrderSchema = z.object({
   businessId: z.string().min(1),
   pickup: geoPointSchema,
@@ -24,6 +26,9 @@ const createOrderSchema = z.object({
   customerName: z.string().optional(),
   customerPhone: z.string().optional(),
   notes: z.string().optional(),
+  /** Valor de la mercancía y modalidad de cobro, ambos opcionales — ver docs/ARCHITECTURE.md §6. */
+  merchandiseValue: z.number().positive().optional(),
+  paymentMode: z.enum(PAYMENT_MODES).optional(),
 });
 
 const acceptOrderSchema = z.object({

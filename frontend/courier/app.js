@@ -288,6 +288,28 @@ function connectSocket(courierId) {
   });
 }
 
+/**
+ * Cómo se maneja el cobro de la mercancía (aparte de la tarifa del
+ * domicilio) es opcional y varía por pedido — el domiciliario necesita
+ * verlo ANTES de aceptar, no después, para saber si va a tener que
+ * manejar ese dinero. Ver `PaymentMode` en el backend.
+ */
+function merchandiseInfoHtml(order) {
+  if (!order.merchandiseValue) {
+    return `<p class="hint">No manejas cobro de mercancía en este pedido.</p>`;
+  }
+  const value = order.merchandiseValue;
+  const currency = order.currency ?? "";
+  const explanations = {
+    BUSINESS_REIMBURSES_COURIER: `El negocio ya cobró el pedido (${value} ${currency}); no tienes que cobrarle nada de mercancía al cliente. El negocio te reembolsa tu servicio por fuera de la app.`,
+    COURIER_COLLECTS_ON_DELIVERY: `Debes pagarle ${value} ${currency} al negocio al recoger la mercancía, y cobrarle esos ${value} ${currency} más tu tarifa de servicio al cliente al entregar.`,
+  };
+  const explanation =
+    explanations[order.paymentMode] ??
+    `Valor de la mercancía: ${value} ${currency}. Confirma con el negocio cómo se maneja el cobro.`;
+  return `<p><strong>Mercancía (${value} ${currency}):</strong> ${explanation}</p>`;
+}
+
 function renderOffer(order, distanceMeters, courierId) {
   currentOfferOrderId = order.id;
   offerContainer.innerHTML = `
@@ -296,6 +318,7 @@ function renderOffer(order, distanceMeters, courierId) {
       <p>Recogida: ${order.pickupAddress}</p>
       <p>Entrega: ${order.dropoffAddress}</p>
       ${order.fare ? `<p>Tarifa: ${order.fare} ${order.currency}</p>` : ""}
+      ${merchandiseInfoHtml(order)}
       <button id="accept-offer-btn">Aceptar</button>
     </div>
   `;
@@ -324,6 +347,7 @@ function renderActiveService(order) {
       <p><strong>Servicio en curso</strong></p>
       <p>Recogida: ${order.pickupAddress}</p>
       <p>Entrega: ${order.dropoffAddress}</p>
+      ${merchandiseInfoHtml(order)}
       <div class="row-actions" style="display:flex; gap:0.5rem; margin-top:0.5rem;">
         <button id="picked-up-btn">Recogido</button>
         <button id="delivered-btn">Entregado</button>

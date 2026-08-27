@@ -100,6 +100,8 @@ quoteForm.addEventListener("submit", async (event) => {
   if (raw.customerName) payload.customerName = raw.customerName;
   if (raw.customerPhone) payload.customerPhone = raw.customerPhone;
   if (raw.notes) payload.notes = raw.notes;
+  if (raw.merchandiseValue) payload.merchandiseValue = Number(raw.merchandiseValue);
+  if (raw.paymentMode) payload.paymentMode = raw.paymentMode;
 
   try {
     quoteStatus.textContent = "Calculando tarifa...";
@@ -119,6 +121,11 @@ quoteForm.addEventListener("submit", async (event) => {
   }
 });
 
+const MERCHANDISE_PAYMENT_MODE_LABELS = {
+  BUSINESS_REIMBURSES_COURIER: "El negocio recibe todo y le reembolsa su servicio al domiciliario",
+  COURIER_COLLECTS_ON_DELIVERY: "El domiciliario paga la mercancía al recoger, y cobra todo al cliente al entregar",
+};
+
 function showQuote(order, quote) {
   quoteSection.hidden = false;
   quoteSummary.innerHTML = `
@@ -126,6 +133,12 @@ function showQuote(order, quote) {
     <div><strong>Entrega:</strong> ${order.dropoffAddress}</div>
     <div><strong>Distancia:</strong> ${quote.distanceKm.toFixed(1)} km</div>
     <div><strong>Tarifa:</strong> ${quote.fare} ${quote.currency}</div>
+    ${
+      order.merchandiseValue
+        ? `<div><strong>Valor de la mercancía:</strong> ${order.merchandiseValue} ${quote.currency}
+           (${MERCHANDISE_PAYMENT_MODE_LABELS[order.paymentMode] ?? "modalidad no especificada"})</div>`
+        : ""
+    }
   `;
   setPickupPoint(order.pickup.lat, order.pickup.lng);
   mapHint.textContent = "Puntos verdes: domiciliarios activos cerca de la recogida.";

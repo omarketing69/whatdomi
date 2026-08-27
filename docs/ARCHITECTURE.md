@@ -322,6 +322,36 @@ solicitante paga `baseFare + pricePerKm × distancia` (con el piso); el %
 de comisión es aparte, y describe cuánto de esa tarifa el domiciliario le
 debe a la plataforma — ver §7.
 
+**Valor de la mercancía y modalidad de cobro** (`Order.merchandiseValue`/
+`paymentMode`, ambos opcionales): aparte de la tarifa del domicilio, el
+domiciliario muchas veces también maneja el cobro del **pedido en sí** (la
+comida/producto). La costumbre varía por negocio, así que se elige por
+pedido, no como un modelo único fijo — al cotizar
+(`POST /api/business/orders/quote`), el negocio puede indicar:
+
+1. **`null`/sin especificar (por defecto)**: el cliente le paga la
+   mercancía directamente al negocio, o no aplica cobro de mercancía en
+   absoluto. El domiciliario no maneja ese dinero.
+2. **`BUSINESS_REIMBURSES_COURIER`**: el cliente le paga/transfiere todo
+   al negocio; es el negocio quien le reembolsa al domiciliario el valor
+   de su servicio, por fuera del sistema (informativo, no se modela una
+   transacción real — igual que el pago de la comisión).
+3. **`COURIER_COLLECTS_ON_DELIVERY`**: el domiciliario paga la mercancía
+   al negocio al recogerla, y cobra mercancía + servicio al cliente al
+   entregar (recuperando lo que adelantó, más lo que le corresponde).
+
+El domiciliario ve el valor y una explicación de qué le toca hacer en su
+PWA **antes de aceptar** el pedido (`frontend/courier/app.js`,
+`merchandiseInfoHtml`) — es información que necesita para decidir si
+acepta, no algo que se entera después. **La comisión de la plataforma
+sigue calculándose solo sobre `fare`** (ver
+`SettlementService.recomputeSettlement`, que suma `order.fare` de los
+pedidos entregados — nunca toca `merchandiseValue`): el valor de la
+mercancía es dinero de paso entre negocio/cliente/domiciliario, no
+ingreso de nadie del sistema. No hay pasarela de pagos ni tracking de
+transacciones reales detrás de esto, consistente con el resto del MVP —
+es solo información para que las partes sepan cómo manejar el efectivo.
+
 ## 7. Activación del domiciliario y comisión diaria
 
 El domiciliario se registra una sola vez (`POST /api/couriers`) con su

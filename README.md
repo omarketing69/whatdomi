@@ -275,7 +275,7 @@ funcionalidad, incluida la validación en navegador con Playwright).
 | POST | `/api/auth/register` | Registrar el negocio (email/contraseña + dirección → punto de recogida por defecto); devuelve un token JWT |
 | POST | `/api/auth/login` | Login del negocio; devuelve un token JWT |
 | GET | `/api/auth/me` | Perfil del negocio autenticado (requiere `Authorization: Bearer <token>`) |
-| POST | `/api/business/orders/quote` | Cotizar un pedido (autenticado): recogida = ubicación registrada del negocio salvo que se sobreescriba, entrega en texto libre |
+| POST | `/api/business/orders/quote` | Cotizar un pedido (autenticado): recogida = ubicación registrada del negocio salvo que se sobreescriba, entrega en texto libre; `merchandiseValue`/`paymentMode` opcionales |
 | POST | `/api/business/orders/:id/confirm` | Confirmar la cotización propia (autenticado, `403` si el pedido es de otro negocio) — arranca la cascada de asignación |
 | POST | `/api/couriers` | Registrar un domiciliario (nombre, teléfono de contacto, `nationalId`/cédula, placa) |
 | POST | `/api/couriers/:id/face-reference` | Registrar/reemplazar el rostro de referencia (`{"descriptor":[128 números],"consent":true}`, `400` sin consentimiento) |
@@ -329,6 +329,29 @@ liquidación del día en curso nunca bloquea su propia activación — solo la
 de días ya cerrados. Ver `backend/src/domain/settlement.ts`
 (`SettlementService`) y sus tests
 (`backend/tests/settlement.test.ts`) para el detalle de esta regla.
+
+## Valor de la mercancía y modalidad de cobro (opcional)
+
+Aparte de la tarifa del domicilio, el domiciliario muchas veces también
+maneja el cobro del **pedido en sí** (la comida/producto) — la costumbre
+varía por negocio, así que se elige por pedido, no un modelo único fijo.
+Al cotizar (`POST /api/business/orders/quote`), el negocio puede indicar
+opcionalmente `merchandiseValue` (el valor de la mercancía) y `paymentMode`:
+
+1. **Sin especificar (por defecto)**: el cliente le paga la mercancía
+   directamente al negocio, o no aplica. El domiciliario no maneja ese dinero.
+2. **`BUSINESS_REIMBURSES_COURIER`**: el cliente le paga todo al negocio;
+   el negocio le reembolsa al domiciliario su servicio por fuera del sistema.
+3. **`COURIER_COLLECTS_ON_DELIVERY`**: el domiciliario paga la mercancía
+   al negocio al recogerla, y cobra mercancía + servicio al cliente al entregar.
+
+El domiciliario ve el valor y una explicación clara de qué le toca hacer
+en su PWA **antes de aceptar** el pedido. La comisión de la plataforma
+sigue calculándose **solo sobre la tarifa del domicilio** — nunca sobre
+`merchandiseValue`, que es dinero de paso, no ingreso de nadie del
+sistema (ver `docs/ARCHITECTURE.md` §6). Igual que el resto del MVP, no
+hay pasarela de pagos detrás: es solo información para que las partes
+sepan cómo manejar el efectivo.
 
 ## Verificación facial del domiciliario
 

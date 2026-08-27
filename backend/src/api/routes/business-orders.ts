@@ -13,6 +13,8 @@ import { asyncHandler } from "../async-handler";
 import { AuthedRequest, requireBusinessAuth } from "../business-auth-middleware";
 import { TokenSigner } from "../../domain/business-auth";
 
+const PAYMENT_MODES = ["DIRECT_TO_BUSINESS", "BUSINESS_REIMBURSES_COURIER", "COURIER_COLLECTS_ON_DELIVERY"] as const;
+
 const quoteSchema = z.object({
   dropoffAddress: z.string().min(1),
   customerName: z.string().optional(),
@@ -20,6 +22,15 @@ const quoteSchema = z.object({
   notes: z.string().optional(),
   /** Solo si el negocio quiere recoger en un lugar distinto al registrado, para este pedido puntual. */
   pickupAddress: z.string().optional(),
+  /**
+   * Valor de la mercancía/pedido y cómo se cobra — ambos opcionales, y sin
+   * relación con la comisión de la plataforma (ver docs/ARCHITECTURE.md §6).
+   * `paymentMode` sin `merchandiseValue` no tiene sentido, pero se deja
+   * que el dominio los guarde tal cual: no es este endpoint el que decide
+   * esa regla de negocio.
+   */
+  merchandiseValue: z.number().positive().optional(),
+  paymentMode: z.enum(PAYMENT_MODES).optional(),
 });
 
 /**
@@ -82,6 +93,8 @@ export function createBusinessOrdersRouter(
           distanceMeters: quote.distanceMeters,
           fare: quote.fare,
           currency: quote.currency,
+          merchandiseValue: parsed.data.merchandiseValue,
+          paymentMode: parsed.data.paymentMode,
         });
 
         return res.status(201).json({ order, quote });

@@ -11,6 +11,7 @@ import {
   GeoPoint,
   Order,
   OrderStatus,
+  PaymentMode,
   PaymentStatus,
   PlatformConfig,
   PlatformSurcharge,
@@ -36,6 +37,8 @@ type OrderRow = {
   distance_meters: number | null;
   fare: string | null;
   currency: string | null;
+  merchandise_value: string | null;
+  payment_mode: PaymentMode | null;
   payment_link: string | null;
   payment_status: PaymentStatus | null;
   assigned_at: Date | null;
@@ -162,6 +165,8 @@ function mapOrder(row: OrderRow): Order {
     distanceMeters: row.distance_meters,
     fare: row.fare === null ? null : Number(row.fare),
     currency: row.currency,
+    merchandiseValue: row.merchandise_value === null ? null : Number(row.merchandise_value),
+    paymentMode: row.payment_mode,
     paymentLink: row.payment_link,
     paymentStatus: row.payment_status,
     assignedAt: row.assigned_at,
@@ -253,8 +258,8 @@ export class PostgresDispatchRepository implements DispatchRepository {
          business_id, requester_name, pickup_address, pickup_lat, pickup_lng,
          dropoff_address, dropoff_lat, dropoff_lng,
          customer_name, customer_phone, notes, status,
-         distance_meters, fare, currency
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         distance_meters, fare, currency, merchandise_value, payment_mode
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING *`,
       [
         input.businessId,
@@ -272,6 +277,8 @@ export class PostgresDispatchRepository implements DispatchRepository {
         input.distanceMeters ?? null,
         input.fare ?? null,
         input.currency ?? null,
+        input.merchandiseValue ?? null,
+        input.paymentMode ?? null,
       ]
     );
     return mapOrder(rows[0]);

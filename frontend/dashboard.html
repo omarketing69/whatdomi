@@ -83,6 +83,29 @@
               <textarea name="notes" rows="2" placeholder="Ej: apto 302, timbre malo"></textarea>
             </label>
           </fieldset>
+          <fieldset>
+            <legend>Cobro de la mercancía (opcional)</legend>
+            <p class="hint">
+              Esto es aparte de la tarifa del domicilio. Solo llénalo si el domiciliario también va a
+              manejar el cobro del pedido en sí (la comida/producto).
+            </p>
+            <label>
+              Valor de la mercancía
+              <input type="number" step="any" min="0" name="merchandiseValue" placeholder="Ej: 45000" />
+            </label>
+            <label>
+              ¿Quién cobra la mercancía?
+              <select name="paymentMode">
+                <option value="">No aplica / el cliente le paga directo al negocio</option>
+                <option value="BUSINESS_REIMBURSES_COURIER">
+                  El negocio recibe todo y le reembolsa su servicio al domiciliario
+                </option>
+                <option value="COURIER_COLLECTS_ON_DELIVERY">
+                  El domiciliario paga la mercancía al recoger, y cobra todo al cliente al entregar
+                </option>
+              </select>
+            </label>
+          </fieldset>
           <button type="submit">Calcular tarifa</button>
           <button type="button" id="cancel-quote-form-btn">Cancelar</button>
         </form>
