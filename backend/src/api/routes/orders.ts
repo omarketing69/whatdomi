@@ -6,6 +6,7 @@ import {
   OrderNotFoundError,
 } from "../../domain/dispatch";
 import { asyncHandler } from "../async-handler";
+import { requireAdminKey } from "./admin";
 
 const geoPointSchema = z.object({
   lat: z.number().min(-90).max(90),
@@ -41,9 +42,15 @@ const ORDER_STATUS_VALUES = [
 export function createOrdersRouter(dispatch: DispatchService): Router {
   const router = Router();
 
-  /** Para el tablero de administración: lista de pedidos, opcionalmente filtrada por estado. */
+  /**
+   * Para el tablero de administración: lista de pedidos, opcionalmente
+   * filtrada por estado. Requiere la clave de admin (ver `requireAdminKey`
+   * en `routes/admin.ts`) — a diferencia de crear/aceptar/actualizar un
+   * pedido puntual, que negocios y domiciliarios siguen usando sin cuenta.
+   */
   router.get(
     "/",
+    requireAdminKey,
     asyncHandler(async (req, res) => {
       const rawStatus = req.query.status;
       const statusValues = (Array.isArray(rawStatus) ? rawStatus : rawStatus ? [rawStatus] : [])
@@ -155,6 +162,7 @@ export function createOrdersRouter(dispatch: DispatchService): Router {
    */
   router.post(
     "/:orderId/reassign",
+    requireAdminKey,
     asyncHandler(async (req, res) => {
       try {
         const { order, candidates } = await dispatch.reassignOrder(req.params.orderId);

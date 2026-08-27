@@ -18,6 +18,20 @@ resuelve la condición de carrera de la asignación, por qué la
 geocodificación combina un LLM con un geocodificador real, y qué queda
 fuera del MVP) ver [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+## Los 3 roles
+
+- **Admin** (dueño de la plataforma): configura tarifa/comisión desde el
+  panel, ve el monitoreo y las estadísticas globales. No es una cuenta con
+  usuario/contraseña — el panel se protege con una clave compartida
+  (`ADMIN_API_KEY`).
+- **Negocio**: quien solicita domicilios, por WhatsApp o por el formulario
+  web directo.
+- **Domiciliario**: quien los entrega, desde su PWA.
+
+Negocio y domiciliario se modelan como entidades separadas (`Business`,
+`Courier`), no como filas de una tabla `users` con un campo `role` —
+ver `docs/ARCHITECTURE.md` §2.
+
 ## Estructura del repo
 
 ```
@@ -76,7 +90,10 @@ npx serve .              # o: python3 -m http.server 5173
 ```
 
 - `index.html` — formulario web directo para negocios (alternativa a WhatsApp).
-- `admin.html` — tablero de monitoreo (pedidos en vivo, reasignar/cancelar).
+- `admin.html` — panel del admin: configuración de tarifa/comisión,
+  liquidaciones y registro de servicios por día, estadísticas, y monitoreo
+  de pedidos en vivo (reasignar/cancelar). Pide la `X-Admin-Key` si el
+  backend la exige.
 - `courier/index.html` — PWA del domiciliario (registro, activación por
   código, ubicación en vivo, recibir y aceptar ofertas).
 
@@ -159,7 +176,7 @@ se salta ese paso y arranca directo en `SEARCHING`.
 |--------|------|-------------|
 | POST | `/api/businesses` | Registrar un negocio |
 | POST | `/api/couriers` | Registrar un domiciliario (responde con `activationCode`) |
-| POST | `/api/couriers/:id/activate` | Activarse con el código (empieza a recibir ofertas) |
+| POST | `/api/couriers/:id/activate` | Activarse con el código (`402` si tiene comisión pendiente de días anteriores) |
 | POST | `/api/couriers/:id/deactivate` | Desactivarse (sin necesitar el código) |
 | POST | `/api/couriers/:id/location` | Reportar ubicación en vivo |
 | POST | `/api/orders` | Crear una solicitud de domicilio directa (busca y notifica candidatos de inmediato) |
@@ -171,6 +188,16 @@ se salta ese paso y arranca directo en `SEARCHING`.
 | POST | `/api/orders/:id/cancel` | Cancelar el pedido |
 | POST | `/api/orders/:id/reassign` | Fallback manual del admin: libera la asignación y reintenta la búsqueda |
 | GET/POST | `/whatsapp/webhook` | Webhook de WhatsApp Business (flujo conversacional completo, ver más abajo) |
+| GET | `/api/admin/config` | Configuración vigente de tarifa/comisión |
+| PUT | `/api/admin/config` | Actualizar tarifa base, costo/km, tarifa mínima, comisión, moneda o recargos |
+| GET | `/api/admin/service-log?date=` | Servicios entregados ese día: quién, cuánto, origen/destino, hora |
+| GET | `/api/admin/settlements?date=` | Totales por domiciliario ese día: servicios, cobrado, comisión, si ya liquidó |
+| POST | `/api/admin/settlements/:courierId/:date/pay` | Marcar como pagada la comisión de ese domiciliario ese día |
+| GET | `/api/admin/stats?range=day\|week` | Totales agregados: servicios, ingresos, comisión de la plataforma |
+
+`GET /api/orders`, `POST /api/orders/:id/reassign` y todo `/api/admin/*`
+están protegidos por la clave de administrador (`ADMIN_API_KEY`, cabecera
+`X-Admin-Key`) — ver "Los 3 roles" arriba y `docs/ARCHITECTURE.md` §2.
 
 Eventos de Socket.io emitidos por el backend: `order:offer` (a cada
 domiciliario candidato), `order:won` (al ganador), `order:status` (a quien
@@ -185,8 +212,9 @@ siga la sala `order:<id>`), `order:offer-cancelled`.
 4. Ambas direcciones se geocodifican (ver `docs/ARCHITECTURE.md` §5: un LLM
    normaliza el texto informal, y un geocodificador real —Nominatim/OSM—
    resuelve las coordenadas). Se calcula distancia y tarifa (base + costo
-   por km, configurable en `.env`), y se le muestra al solicitante para que
-   responda *SI* o *NO*.
+   por km + piso mínimo, configurables en vivo por el admin desde
+   `/api/admin/config`), y se le muestra al solicitante para que responda
+   *SI* o *NO*.
 5. Si confirma: se crea el pedido y arranca la búsqueda automática de
    domiciliarios, igual que el flujo directo.
 6. Al asignarse: el **domiciliario** recibe los datos del servicio
@@ -197,6 +225,24 @@ Toda la máquina de estados vive en
 `backend/src/whatsapp/conversation.ts` y está cubierta por tests
 (`backend/tests/whatsapp-conversation.test.ts`) que no dependen de tener
 credenciales de WhatsApp ni de red real.
+
+## Comisión y liquidación diaria
+
+La plataforma se queda con un **% configurable** (`commissionPercentage`
+en `/api/admin/config`) de lo que cada domiciliario cobra en sus
+servicios. Al final de cada entrega se recalcula su **liquidación del
+día** (`GET /api/admin/settlements?date=...`): cuántos servicios hizo,
+cuánto cobró, cuánto le corresponde a la plataforma, y si ya la pagó
+(acción manual del admin, `POST /api/admin/settlements/:courierId/:date/pay`
+— el pago en sí sigue siendo offline, igual que el cobro del servicio).
+
+**Un domiciliario con comisión pendiente de un día anterior no puede
+activarse al día siguiente**: `POST /api/couriers/:id/activate` responde
+`402 Payment Required` con el detalle de qué días quedaron sin pagar. La
+liquidación del día en curso nunca bloquea su propia activación — solo la
+de días ya cerrados. Ver `backend/src/domain/settlement.ts`
+(`SettlementService`) y sus tests
+(`backend/tests/settlement.test.ts`) para el detalle de esta regla.
 
 ## Fuera de alcance en este MVP
 
@@ -212,9 +258,9 @@ credenciales de WhatsApp ni de red real.
 ## Variables de entorno
 
 Ver [`.env.example`](.env.example) para la lista completa comentada
-(Postgres, radio de búsqueda, tarifa, geocodificación, credenciales de
-WhatsApp Business). Nunca subas un `.env` real con secretos: el
-`.gitignore` ya lo excluye.
+(Postgres, radio de búsqueda, semilla inicial de tarifa/comisión,
+`ADMIN_API_KEY`, geocodificación, credenciales de WhatsApp Business). Nunca
+subas un `.env` real con secretos: el `.gitignore` ya lo excluye.
 
 ## Estado del WhatsApp Business
 

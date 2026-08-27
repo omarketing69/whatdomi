@@ -114,3 +114,44 @@ DROP TRIGGER IF EXISTS orders_set_pickup_location ON orders;
 CREATE TRIGGER orders_set_pickup_location
   BEFORE INSERT OR UPDATE ON orders
   FOR EACH ROW EXECUTE FUNCTION set_order_pickup_location();
+
+-- Configuración de tarifas/comisión de toda la plataforma: fila única
+-- (singleton, id fijo en 1), editable por el admin desde /api/admin/config
+-- — nunca hardcodeada en el código de la aplicación. Los valores por
+-- defecto de abajo son el punto de partida; ajústalos desde el panel.
+CREATE TABLE IF NOT EXISTS platform_config (
+  id                     SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  base_fare              NUMERIC(12, 2) NOT NULL DEFAULT 3000,
+  price_per_km           NUMERIC(12, 2) NOT NULL DEFAULT 800,
+  min_fare               NUMERIC(12, 2) NOT NULL DEFAULT 3000,
+  commission_percentage  NUMERIC(5, 2) NOT NULL DEFAULT 10,
+  currency               TEXT NOT NULL DEFAULT 'COP',
+  -- Recargos declarados (nocturno, zona, etc.) que el admin puede registrar;
+  -- todavía no se aplican en el cálculo de tarifa, ver docs/ARCHITECTURE.md.
+  surcharges             JSONB NOT NULL DEFAULT '[]',
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO platform_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- Liquidación diaria de comisión por domiciliario: cuánto cobró ese día en
+-- servicios entregados y cuánto de eso le corresponde a la plataforma.
+-- Pagar la comisión pendiente de un día anterior es requisito para poder
+-- activarse al día siguiente (ver CourierActivationService/SettlementService).
+CREATE TABLE IF NOT EXISTS courier_settlements (
+  courier_id             UUID NOT NULL REFERENCES couriers(id),
+  date                   DATE NOT NULL,
+  service_count          INTEGER NOT NULL DEFAULT 0,
+  total_earned           NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  -- Tasa vigente al momento del cálculo, congelada (no cambia si el admin
+  -- ajusta la comisión general después).
+  commission_percentage  NUMERIC(5, 2) NOT NULL,
+  commission_amount      NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  status                 TEXT NOT NULL DEFAULT 'PENDING',
+  paid_at                TIMESTAMPTZ,
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (courier_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS courier_settlements_date_idx ON courier_settlements (date);
+CREATE INDEX IF NOT EXISTS courier_settlements_status_idx ON courier_settlements (status);

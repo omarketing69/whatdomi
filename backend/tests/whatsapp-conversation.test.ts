@@ -4,7 +4,6 @@ import { GeocodeResult, GeocodingProvider, GeocodingService, AddressNormalizer }
 import { InMemoryDispatchRepository } from "../src/testing/in-memory-repository";
 import { InMemoryConversationStore, WhatsAppConversationService } from "../src/whatsapp/conversation";
 
-const FARE_CONFIG = { baseFare: 3000, pricePerKm: 800, currency: "COP" };
 const PHONE = "+573001112233";
 
 class PassthroughNormalizer implements AddressNormalizer {
@@ -27,7 +26,6 @@ function makeConversation(points: Record<string, GeocodeResult>, repo = new InMe
     repo,
     dispatch,
     geocoding,
-    FARE_CONFIG,
     new InMemoryConversationStore()
   );
   return { repo, dispatch, conversation };

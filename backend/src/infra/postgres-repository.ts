@@ -4,6 +4,7 @@ import { DispatchRepository } from "../domain/repository";
 import {
   Business,
   Courier,
+  CourierSettlement,
   CourierWithDistance,
   CreateBusinessInput,
   CreateCourierInput,
@@ -12,6 +13,10 @@ import {
   Order,
   OrderStatus,
   PaymentStatus,
+  PlatformConfig,
+  PlatformSurcharge,
+  SettlementStatus,
+  UpdatePlatformConfigInput,
 } from "../domain/types";
 
 type OrderRow = {
@@ -61,6 +66,63 @@ type BusinessRow = {
   address: string | null;
   created_at: Date;
 };
+
+type PlatformConfigRow = {
+  base_fare: string;
+  price_per_km: string;
+  min_fare: string;
+  commission_percentage: string;
+  currency: string;
+  surcharges: PlatformSurcharge[];
+  updated_at: Date;
+};
+
+type SettlementRow = {
+  courier_id: string;
+  date: string | Date;
+  service_count: number;
+  total_earned: string;
+  commission_percentage: string;
+  commission_amount: string;
+  status: SettlementStatus;
+  paid_at: Date | null;
+  updated_at: Date;
+};
+
+function mapPlatformConfig(row: PlatformConfigRow): PlatformConfig {
+  return {
+    baseFare: Number(row.base_fare),
+    pricePerKm: Number(row.price_per_km),
+    minFare: Number(row.min_fare),
+    commissionPercentage: Number(row.commission_percentage),
+    currency: row.currency,
+    // node-postgres ya parsea JSONB a un valor JS; el driver puede
+    // devolver el default de columna como string en algunas versiones, así
+    // que se tolera ambos casos.
+    surcharges: typeof row.surcharges === "string" ? JSON.parse(row.surcharges) : row.surcharges,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toDateOnly(date: string | Date): string {
+  // node-postgres devuelve las columnas DATE como objetos Date (medianoche
+  // UTC) por defecto; normalizamos siempre a un string YYYY-MM-DD.
+  return date instanceof Date ? date.toISOString().slice(0, 10) : date.slice(0, 10);
+}
+
+function mapSettlement(row: SettlementRow): CourierSettlement {
+  return {
+    courierId: row.courier_id,
+    date: toDateOnly(row.date),
+    serviceCount: row.service_count,
+    totalEarned: Number(row.total_earned),
+    commissionPercentage: Number(row.commission_percentage),
+    commissionAmount: Number(row.commission_amount),
+    status: row.status,
+    paidAt: row.paid_at,
+    updatedAt: row.updated_at,
+  };
+}
 
 function mapBusiness(row: BusinessRow): Business {
   return {
@@ -294,5 +356,152 @@ export class PostgresDispatchRepository implements DispatchRepository {
       courierId,
     ]);
     return rows[0] ? mapCourier(rows[0]) : null;
+  }
+
+  async getPlatformConfig(): Promise<PlatformConfig> {
+    const { rows } = await this.pool.query<PlatformConfigRow>(
+      `SELECT * FROM platform_config WHERE id = 1`
+    );
+    if (!rows[0]) {
+      throw new Error(
+        "No existe la fila de platform_config (id=1); corre `npm run db:migrate` para aplicar el esquema"
+      );
+    }
+    return mapPlatformConfig(rows[0]);
+  }
+
+  async updatePlatformConfig(patch: UpdatePlatformConfigInput): Promise<PlatformConfig> {
+    const current = await this.getPlatformConfig();
+    const merged = { ...current, ...patch };
+    const { rows } = await this.pool.query<PlatformConfigRow>(
+      `UPDATE platform_config
+       SET base_fare = $1, price_per_km = $2, min_fare = $3, commission_percentage = $4,
+           currency = $5, surcharges = $6, updated_at = now()
+       WHERE id = 1
+       RETURNING *`,
+      [
+        merged.baseFare,
+        merged.pricePerKm,
+        merged.minFare,
+        merged.commissionPercentage,
+        merged.currency,
+        JSON.stringify(merged.surcharges),
+      ]
+    );
+    return mapPlatformConfig(rows[0]);
+  }
+
+  async listDeliveredOrders(filter?: { courierId?: string; date?: string }): Promise<Order[]> {
+    const conditions = [`status = 'DELIVERED'`];
+    const params: unknown[] = [];
+    if (filter?.courierId) {
+      params.push(filter.courierId);
+      conditions.push(`courier_id = $${params.length}`);
+    }
+    if (filter?.date) {
+      params.push(filter.date);
+      conditions.push(`delivered_at::date = $${params.length}::date`);
+    }
+    const { rows } = await this.pool.query<OrderRow>(
+      `SELECT * FROM orders WHERE ${conditions.join(" AND ")} ORDER BY delivered_at ASC`,
+      params
+    );
+    return rows.map(mapOrder);
+  }
+
+  async getServiceStats(
+    fromDate: string,
+    toDate: string
+  ): Promise<{ serviceCount: number; totalRevenue: number }> {
+    const { rows } = await this.pool.query<{ service_count: string; total_revenue: string | null }>(
+      `SELECT COUNT(*) AS service_count, COALESCE(SUM(fare), 0) AS total_revenue
+       FROM orders
+       WHERE status = 'DELIVERED' AND delivered_at::date BETWEEN $1::date AND $2::date`,
+      [fromDate, toDate]
+    );
+    return {
+      serviceCount: Number(rows[0]?.service_count ?? 0),
+      totalRevenue: Number(rows[0]?.total_revenue ?? 0),
+    };
+  }
+
+  async getSettlement(courierId: string, date: string): Promise<CourierSettlement | null> {
+    const { rows } = await this.pool.query<SettlementRow>(
+      `SELECT * FROM courier_settlements WHERE courier_id = $1 AND date = $2::date`,
+      [courierId, date]
+    );
+    return rows[0] ? mapSettlement(rows[0]) : null;
+  }
+
+  async upsertSettlement(
+    courierId: string,
+    date: string,
+    data: {
+      serviceCount: number;
+      totalEarned: number;
+      commissionPercentage: number;
+      commissionAmount: number;
+    }
+  ): Promise<CourierSettlement> {
+    // El UPDATE del ON CONFLICT solo se aplica si la fila sigue PENDING;
+    // si ya estaba PAID, la condición del WHERE lo salta y no se
+    // actualiza nada (queda congelada), así que no devuelve fila.
+    const { rows } = await this.pool.query<SettlementRow>(
+      `INSERT INTO courier_settlements (courier_id, date, service_count, total_earned, commission_percentage, commission_amount, status)
+       VALUES ($1, $2::date, $3, $4, $5, $6, 'PENDING')
+       ON CONFLICT (courier_id, date) DO UPDATE SET
+         service_count = EXCLUDED.service_count,
+         total_earned = EXCLUDED.total_earned,
+         commission_percentage = EXCLUDED.commission_percentage,
+         commission_amount = EXCLUDED.commission_amount,
+         updated_at = now()
+       WHERE courier_settlements.status = 'PENDING'
+       RETURNING *`,
+      [courierId, date, data.serviceCount, data.totalEarned, data.commissionPercentage, data.commissionAmount]
+    );
+    if (rows[0]) return mapSettlement(rows[0]);
+
+    // La fila ya existía y estaba PAID: se devuelve tal cual, congelada.
+    const existing = await this.getSettlement(courierId, date);
+    if (!existing) {
+      throw new Error(`No se pudo crear ni recuperar la liquidación de ${courierId} en ${date}`);
+    }
+    return existing;
+  }
+
+  async markSettlementPaid(courierId: string, date: string): Promise<CourierSettlement | null> {
+    const { rows } = await this.pool.query<SettlementRow>(
+      `UPDATE courier_settlements
+       SET status = 'PAID', paid_at = now(), updated_at = now()
+       WHERE courier_id = $1 AND date = $2::date AND status = 'PENDING'
+       RETURNING *`,
+      [courierId, date]
+    );
+    if (rows[0]) return mapSettlement(rows[0]);
+    return this.getSettlement(courierId, date);
+  }
+
+  async listPendingSettlementsBefore(courierId: string, date: string): Promise<CourierSettlement[]> {
+    const { rows } = await this.pool.query<SettlementRow>(
+      `SELECT * FROM courier_settlements
+       WHERE courier_id = $1 AND status = 'PENDING' AND date < $2::date
+       ORDER BY date ASC`,
+      [courierId, date]
+    );
+    return rows.map(mapSettlement);
+  }
+
+  async listSettlements(filter?: { date?: string }): Promise<CourierSettlement[]> {
+    if (filter?.date) {
+      const { rows } = await this.pool.query<SettlementRow>(
+        `SELECT * FROM courier_settlements WHERE date = $1::date ORDER BY commission_amount DESC`,
+        [filter.date]
+      );
+      return rows.map(mapSettlement);
+    }
+    const { rows } = await this.pool.query<SettlementRow>(
+      `SELECT * FROM courier_settlements ORDER BY date DESC, commission_amount DESC LIMIT 200`
+    );
+    return rows.map(mapSettlement);
   }
 }

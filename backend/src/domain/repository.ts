@@ -1,6 +1,7 @@
 import {
   Business,
   Courier,
+  CourierSettlement,
   CourierWithDistance,
   CreateBusinessInput,
   CreateCourierInput,
@@ -8,6 +9,8 @@ import {
   GeoPoint,
   Order,
   OrderStatus,
+  PlatformConfig,
+  UpdatePlatformConfigInput,
 } from "./types";
 
 /**
@@ -88,4 +91,39 @@ export interface DispatchRepository {
   setCourierActive(courierId: string, isActive: boolean): Promise<Courier | null>;
 
   getCourier(courierId: string): Promise<Courier | null>;
+
+  /** Configuración de tarifas/comisión de la plataforma (singleton, editable por el admin). */
+  getPlatformConfig(): Promise<PlatformConfig>;
+
+  updatePlatformConfig(patch: UpdatePlatformConfigInput): Promise<PlatformConfig>;
+
+  /** Pedidos entregados, para el registro de servicios y las estadísticas del admin. */
+  listDeliveredOrders(filter?: { courierId?: string; date?: string }): Promise<Order[]>;
+
+  /** Conteo y suma de tarifas de pedidos entregados en un rango de fechas (YYYY-MM-DD, inclusivo), para las estadísticas agregadas del admin. */
+  getServiceStats(fromDate: string, toDate: string): Promise<{ serviceCount: number; totalRevenue: number }>;
+
+  getSettlement(courierId: string, date: string): Promise<CourierSettlement | null>;
+
+  /**
+   * Crea o actualiza la liquidación del día para un domiciliario. Si ya
+   * está `PAID`, el repositorio NO debe sobreescribirla (queda congelada)
+   * — devuelve la fila existente tal cual. La política de negocio vive en
+   * `SettlementService`; el repositorio solo garantiza esa invariante a
+   * nivel de escritura.
+   */
+  upsertSettlement(
+    courierId: string,
+    date: string,
+    data: { serviceCount: number; totalEarned: number; commissionPercentage: number; commissionAmount: number }
+  ): Promise<CourierSettlement>;
+
+  /** Marca como pagada la liquidación de ese día (acción manual/offline del admin). */
+  markSettlementPaid(courierId: string, date: string): Promise<CourierSettlement | null>;
+
+  /** Liquidaciones `PENDING` de un domiciliario con fecha anterior a la dada — si hay alguna, no puede activarse. */
+  listPendingSettlementsBefore(courierId: string, date: string): Promise<CourierSettlement[]>;
+
+  /** Para el panel de admin: liquidaciones de todos los domiciliarios en una fecha dada. */
+  listSettlements(filter?: { date?: string }): Promise<CourierSettlement[]>;
 }

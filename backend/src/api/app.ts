@@ -2,6 +2,7 @@ import cors from "cors";
 import express, { Express } from "express";
 import { DispatchService } from "../domain/dispatch";
 import { DispatchRepository } from "../domain/repository";
+import { createAdminRouter } from "./routes/admin";
 import { createCouriersRouter } from "./routes/couriers";
 import { createOrdersRouter } from "./routes/orders";
 import { createBusinessesRouter, createCourierRegistrationRouter } from "./routes/registration";
@@ -26,6 +27,7 @@ export function createApp(
   app.use("/api/businesses", createBusinessesRouter(repo));
   app.use("/api/couriers", createCourierRegistrationRouter(repo));
   app.use("/api/couriers", createCouriersRouter(repo));
+  app.use("/api/admin", createAdminRouter(repo));
   app.use("/whatsapp", createWhatsAppRouter(conversation, whatsappSender));
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

@@ -7,6 +7,8 @@ import {
 } from "../src/domain/dispatch";
 import { InMemoryDispatchRepository } from "../src/testing/in-memory-repository";
 import { Order, CourierWithDistance } from "../src/domain/types";
+import { isoDate } from "../src/domain/date";
+import { SettlementService } from "../src/domain/settlement";
 
 const BOGOTA_RESTAURANT = { lat: 4.6533, lng: -74.0836 };
 
@@ -177,5 +179,22 @@ describe("ciclo de vida del pedido", () => {
     const delivered = await service.markDelivered(order.id);
     expect(delivered.status).toBe("DELIVERED");
     expect(delivered.deliveredAt).not.toBeNull();
+  });
+
+  it("al entregar, recalcula la liquidación del día del domiciliario si se inyectó un SettlementService", async () => {
+    const repo = new InMemoryDispatchRepository();
+    await repo.updatePlatformConfig({ commissionPercentage: 10 });
+    const courier = repo.seedCourier({ isActive: true, lat: 4.654, lng: -74.084 });
+    const settlements = new SettlementService(repo);
+    const service = new DispatchService(repo, undefined, undefined, undefined, settlements);
+
+    const { order } = await service.createDeliveryRequest({ ...baseOrderInput(), fare: 5000 });
+    await service.acceptOrder(order.id, courier.id);
+    const delivered = await service.markDelivered(order.id);
+
+    const settlement = await repo.getSettlement(courier.id, isoDate(delivered.deliveredAt as Date));
+    expect(settlement).not.toBeNull();
+    expect(settlement?.totalEarned).toBe(5000);
+    expect(settlement?.commissionAmount).toBe(500);
   });
 });

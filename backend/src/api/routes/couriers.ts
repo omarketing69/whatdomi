@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { CourierActivationService, CourierNotFoundError, InvalidActivationCodeError } from "../../domain/courier-activation";
 import { DispatchRepository } from "../../domain/repository";
+import { PendingSettlementError } from "../../domain/settlement";
 import { asyncHandler } from "../async-handler";
 
 const locationSchema = z.object({
@@ -55,6 +56,9 @@ export function createCouriersRouter(repo: DispatchRepository): Router {
       } catch (err) {
         if (err instanceof CourierNotFoundError) return res.status(404).json({ error: err.message });
         if (err instanceof InvalidActivationCodeError) return res.status(403).json({ error: err.message });
+        if (err instanceof PendingSettlementError) {
+          return res.status(402).json({ error: err.message, pending: err.pending });
+        }
         throw err;
       }
     })

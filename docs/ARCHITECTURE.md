@@ -64,28 +64,60 @@ Flujo completo de un pedido (WhatsApp, el canal principal):
    servicio (recogida, entrega, tarifa); el **negocio** recibe nombre,
    placa y teléfono del domiciliario.
 7. El domiciliario recoge (`IN_PROGRESS`) y entrega (`DELIVERED`) el
-   pedido desde su PWA.
-8. En paralelo, el **tablero de administración** ve todo esto en vivo
-   (polling corto sobre la misma API): es solo para monitoreo, con un
-   botón de reasignar/cancelar como fallback operativo si un domiciliario
-   asignado no puede cumplir.
+   pedido desde su PWA. Al entregar, se recalcula su liquidación de
+   comisión del día (ver §7-8).
+8. En paralelo, el **admin** ve todo esto en vivo desde su panel (polling
+   corto sobre la misma API): pedidos en curso (solo monitoreo, con un
+   botón de reasignar/cancelar como fallback operativo), tarifa/comisión
+   configurables, y liquidaciones diarias por domiciliario.
 
 El formulario web directo (`frontend/index.html`) es un segundo canal para
 negocios que no quieren usar WhatsApp: ya manda lat/lng resueltas, así que
 se salta la cotización y arranca directo en `SEARCHING`.
 
-## 2. Entidades y ciclo de vida
+## 2. Roles, entidades y ciclo de vida
 
-- **Business** (negocio): nombre, teléfono, dirección. Por WhatsApp se
-  crea automáticamente la primera vez que un número escribe (no hay
-  registro previo ni verificación de identidad — ver §7).
-- **Courier** (domiciliario): nombre, teléfono, placa, `isActive`,
-  `activationCode` (código con el que se activa desde su PWA), ubicación
-  en vivo (`lat`/`lng`), `lastSeenAt`.
+WhatDomi tiene 3 niveles de acceso (`PlatformRole` en `types.ts`, ver el
+comentario ahí para el detalle):
+
+- **Admin**: el dueño de la plataforma. Configura tarifa/comisión y ve
+  monitoreo/estadísticas globales. **No** es una fila en `businesses` ni
+  en `couriers`, ni una tabla `admins` con usuario/contraseña: es acceso a
+  `/api/admin/*` (y a `GET /api/orders` / `POST /api/orders/:id/reassign`)
+  protegido por una clave compartida (`ADMIN_API_KEY`, cabecera
+  `X-Admin-Key`, ver `requireAdminKey` en `api/routes/admin.ts`). Es una
+  decisión deliberada: el admin es la única pieza del sistema que toca
+  dinero de la plataforma (tarifas, comisión, cuánto le debe cada
+  domiciliario), así que necesita algo más que "no hay verificación" —
+  pero un login completo (usuario/contraseña, sesiones) es más de lo que
+  un MVP de un solo operador necesita. Ver §11 para cómo evolucionar esto.
+- **Business** (negocio): quien solicita domicilios. Nombre, teléfono,
+  dirección. Por WhatsApp se crea automáticamente la primera vez que un
+  número escribe (no hay registro previo ni verificación de identidad).
+- **Courier** (domiciliario): quien los entrega. Nombre, teléfono, placa,
+  `isActive`, `activationCode` (código con el que se activa desde su
+  PWA), ubicación en vivo (`lat`/`lng`), `lastSeenAt`.
+
+Business y Courier se modelan como **entidades separadas**, no como filas
+de una tabla `users` con un campo `role`: sus datos y ciclo de vida no se
+parecen en nada (uno pide, el otro reporta ubicación y se activa), así que
+forzarlos a un esquema común solo agregaría columnas nulas y `if`s por
+rol. Es la opción explícitamente permitida junto con la tabla de roles al
+plantear este diseño, y la que mejor encaja con SQL relacional.
+
+Además de esas 3 entidades de negocio, dos más soportan el modelo de
+monetización (ver §6-7):
+
+- **PlatformConfig**: fila única (singleton) con tarifa base, costo/km,
+  tarifa mínima, % de comisión, moneda y recargos declarados — editable
+  por el admin, nunca hardcodeada.
+- **CourierSettlement**: liquidación diaria de comisión por domiciliario
+  (una fila por `courierId` + fecha).
+
 - **Order** (pedido/solicitud de domicilio): negocio, nombre del
   solicitante, punto de recogida, punto de entrega, distancia, tarifa,
   moneda, `status`, domiciliario asignado, y `paymentLink`/`paymentStatus`
-  (sin usar todavía, ver §8).
+  (sin usar todavía, ver §10).
 
 Ciclo de vida de un pedido (`OrderStatus`):
 
@@ -195,16 +227,41 @@ resuelve, el bot le pide al solicitante que describa la dirección de otra
 forma (ver `WhatsAppConversationService`) en vez de crear un pedido con
 coordenadas erróneas.
 
-## 6. Tarifa
+## 6. Tarifa y comisión (configurables por el admin)
 
 Modelo deliberadamente simple para el MVP: tarifa base + costo por
-kilómetro, ambos configurables por entorno (`FARE_BASE`, `FARE_PER_KM`,
-`FARE_CURRENCY`) sin tocar código — ver `backend/src/domain/fare.ts`. La
-distancia se calcula con la fórmula de Haversine entre recogida y entrega
-(línea recta, no ruta real por calles); es una aproximación razonable para
-un MVP y evita depender de una API de ruteo.
+kilómetro + un piso (tarifa mínima, para que un trayecto muy corto no
+cueste casi nada) — ver `backend/src/domain/fare.ts`. La distancia se
+calcula con la fórmula de Haversine entre recogida y entrega (línea recta,
+no ruta real por calles); es una aproximación razonable para un MVP y
+evita depender de una API de ruteo.
 
-## 7. Activación del domiciliario (PWA)
+**Todo lo relacionado a tarifas vive en `PlatformConfig`, una fila única en
+la tabla `platform_config`, no en variables de entorno ni hardcodeado**:
+tarifa base, costo/km, tarifa mínima, % de comisión, moneda, y una lista de
+recargos declarados (`surcharges`, ej. "nocturno", "zona rural") que el
+admin puede registrar pero que **todavía no se aplican** en el cálculo —
+es una extensión declarada para no cerrar la puerta, no una regla activa.
+El admin la edita desde `PUT /api/admin/config`; el flujo de WhatsApp lee
+la config vigente en cada cotización (`WhatsAppConversationService` llama
+a `repo.getPlatformConfig()` en el momento, no guarda una copia al
+arrancar el servidor), así que un cambio del admin aplica de inmediato a
+la siguiente conversación.
+
+Las variables `FARE_BASE`/`FARE_PER_KM`/`FARE_MIN`/`FARE_CURRENCY`/
+`COMMISSION_PERCENTAGE` en `.env` solo **siembran** la fila inicial de
+`platform_config` en Postgres (vía `db/schema.sql`) — una vez que existe,
+son la única fuente de verdad y esas variables ya no se vuelven a leer.
+Para el repositorio en memoria (tests / desarrollo sin Postgres) sí siguen
+siendo la fuente en cada arranque, porque ahí no hay una base de datos
+persistente que las reemplace.
+
+**Importante**: la comisión NO se suma a lo que paga el cliente. El
+solicitante paga `baseFare + pricePerKm × distancia` (con el piso); el %
+de comisión es aparte, y describe cuánto de esa tarifa el domiciliario le
+debe a la plataforma — ver §7.
+
+## 7. Activación del domiciliario y comisión diaria
 
 El domiciliario se registra una sola vez (`POST /api/couriers`) y recibe
 un `activationCode` de 6 dígitos. Para "prender" su sesión y empezar a
@@ -220,18 +277,58 @@ todavía (ni domiciliarios ni solicitantes). Antes de operar a escala
 conviene: hashear el código, rotarlo, o reemplazarlo por un login con
 OTP por SMS/WhatsApp.
 
-## 8. Tablero de administración
+**Activarse también depende de estar al día con la comisión.** Cada vez
+que un domiciliario entrega un pedido (`DispatchService.markDelivered`),
+se recalcula su `CourierSettlement` del día (`SettlementService.
+recomputeSettlement`): cuántos servicios hizo, cuánto cobró, y cuánto le
+corresponde a la plataforma con el `commissionPercentage` **vigente en ese
+momento** (queda congelado en esa fila, no cambia si el admin ajusta la
+comisión general después). Mientras la liquidación de un día siga
+`PENDING`, se puede recalcular libremente (llegan más entregas ese mismo
+día); una vez el admin la marca `PAID`
+(`POST /api/admin/settlements/:courierId/:date/pay`, acción manual/offline,
+igual que el cobro del servicio), queda **congelada** — una entrega
+tardía del mismo día ya no la reabre.
 
-`frontend/admin.html` lista los pedidos (con polling corto sobre
-`GET /api/orders`) filtrando por estado, y muestra recogida, entrega,
-tarifa, estado y domiciliario asignado de cada uno. **Es solo para
-monitoreo**: la asignación sigue siendo 100% automática. La única acción
-disponible además de cancelar es "Reasignar"
-(`POST /api/orders/:id/reassign`), pensada como fallback operativo — por
-ejemplo, si el domiciliario asignado avisa que no puede cumplir el
-servicio. Reasignar libera la asignación actual y vuelve a correr la misma
-búsqueda automática de candidatos (excluyendo al domiciliario anterior),
-no asigna a nadie a mano.
+Antes de activarse, `CourierActivationService.activate` llama a
+`SettlementService.canActivate(courierId, hoy)`: si hay **alguna
+liquidación `PENDING` de un día *anterior* a hoy**, la activación se
+rechaza con `402 Payment Required` (no `403`, para distinguirlo de un
+código de activación incorrecto) y el detalle de qué días quedaron sin
+pagar. La liquidación del propio día en curso nunca bloquea — el bloqueo
+es específicamente por deuda de días ya cerrados, para no crear una
+paradoja de "no puedo trabajar hoy para pagar lo de ayer". Ver
+`backend/tests/settlement.test.ts` y `backend/tests/courier-activation.test.ts`
+para el detalle de esta regla probado explícitamente (incluida la
+concurrencia de recalcular la misma liquidación dos veces).
+
+## 8. Panel de administración
+
+`frontend/admin.html` es la única superficie que usa el rol admin. Cuatro
+capacidades, todas detrás de `requireAdminKey`:
+
+1. **Monitoreo de pedidos** (`GET /api/orders` con polling corto,
+   filtrando por estado) — recogida, entrega, tarifa, estado y
+   domiciliario de cada uno. **Es solo para monitoreo**: la asignación
+   sigue siendo 100% automática. La única acción además de cancelar es
+   "Reasignar" (`POST /api/orders/:id/reassign`), un fallback operativo —
+   por ejemplo, si el domiciliario asignado avisa que no puede cumplir.
+   Libera la asignación actual y vuelve a correr la misma búsqueda
+   automática (excluyendo al domiciliario anterior), no asigna a nadie a
+   mano.
+2. **Configuración de tarifa/comisión** (`GET`/`PUT /api/admin/config`) —
+   ver §6.
+3. **Registro de servicios y liquidaciones por día**
+   (`GET /api/admin/service-log`, `GET /api/admin/settlements`, ambos con
+   `?date=YYYY-MM-DD`): quién hizo cada servicio, cuánto cobró, origen y
+   destino; y, agrupado por domiciliario, cuántos servicios, cuánto
+   cobró en total, cuánto le corresponde de comisión, y si ya la pagó
+   (`POST /api/admin/settlements/:courierId/:date/pay`) — ver §7.
+4. **Estadísticas agregadas** (`GET /api/admin/stats?range=day|week`):
+   total de servicios e ingresos, y una estimación de la comisión total de
+   la plataforma usando la tasa **vigente** sobre todo el rango (una
+   aproximación para una vista rápida — el monto "oficial" por día es el
+   que quedó congelado en cada `CourierSettlement`, no este agregado).
 
 ## 9. Integración con WhatsApp: opciones y recomendación
 
@@ -275,21 +372,37 @@ Pendiente de implementar en cuanto haya credenciales:
 
 ## 10. Fuera de alcance en este MVP
 
-- **Pagos**: se manejan manual/offline entre negocio y domiciliario.
-  `Order` ya tiene `paymentLink`/`paymentStatus` reservados para conectar
-  una pasarela más adelante sin migrar el esquema otra vez.
-- **Verificación de identidad real**: ni el solicitante (un nombre por
-  chat, sin cuenta) ni el domiciliario (código de activación simple, ver
-  §7) pasan por un mecanismo de autenticación fuerte. Es una decisión de
-  producto deliberada para mantener el costo operativo bajo en el mercado
-  objetivo, no un descuido.
+- **Pagos**: tanto el cobro del servicio (negocio → domiciliario) como el
+  pago de la comisión (domiciliario → plataforma) se manejan
+  manual/offline. Lo que SÍ está implementado es el *registro* de esa
+  comisión (`CourierSettlement`, ver §7) y su efecto (bloquear la
+  activación si queda pendiente) — lo que falta es cualquier pasarela que
+  mueva dinero de verdad. `Order` ya tiene `paymentLink`/`paymentStatus`
+  reservados para conectar una pasarela del lado del cobro del servicio
+  más adelante, sin migrar el esquema otra vez.
+- **Recargos (surcharges)**: el admin puede *declarar* recargos
+  (nocturno, por zona) en `PlatformConfig.surcharges`, pero
+  `calculateFare` todavía no los aplica — es una extensión con el espacio
+  ya reservado, no una regla activa. Aplicarlos requeriría decidir cómo se
+  activan (¿por horario del servidor? ¿por zona geográfica del punto de
+  recogida?), que quedó fuera del alcance de este ajuste.
+- **Verificación de identidad real de negocio y domiciliario**: ni el
+  solicitante (un nombre por chat, sin cuenta) ni el domiciliario (código
+  de activación simple, ver §7) pasan por un mecanismo de autenticación
+  fuerte. Es una decisión de producto deliberada para mantener el costo
+  operativo bajo en el mercado objetivo, no un descuido. El admin sí tiene
+  una barrera (`ADMIN_API_KEY`), pero tampoco es un login completo — ver
+  el siguiente punto.
 
 ## 11. Consideraciones para producción (fuera del alcance del MVP)
 
-- **Autenticación/autorización**: hoy los endpoints no requieren
-  credenciales más allá del código de activación del domiciliario. Antes
-  de producción: API key o JWT para negocios, y un mecanismo de identidad
-  más fuerte para domiciliarios.
+- **Autenticación/autorización real para los 3 roles**: hoy el admin se
+  protege con una clave compartida por cabecera (suficiente para un solo
+  operador de la plataforma, no para un equipo), y negocio/domiciliario no
+  tienen cuenta en absoluto. Antes de producción a mayor escala: cuentas
+  con usuario/contraseña o magic link para admins (con roles si hay más de
+  un operador), API key o JWT por negocio, y un mecanismo de identidad más
+  fuerte para domiciliarios que el código de activación simple.
 - **Rate limiting** en los endpoints públicos y en el webhook de WhatsApp.
 - **Notificación en cascada por cercanía**: hoy se notifica a los N más
   cercanos a la vez; una mejora natural es notificar primero al más cercano

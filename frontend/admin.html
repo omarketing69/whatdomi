@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="styles.css" />
     <style>
       main {
-        max-width: 960px;
+        max-width: 1080px;
       }
       table {
         width: 100%;
@@ -59,16 +59,92 @@
         color: var(--muted);
         padding: 1rem 0;
       }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+      .stat-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.75rem;
+      }
+      .stat-card .value {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: var(--primary-dark);
+      }
+      .stat-card .label {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .config-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.75rem;
+      }
+      .date-picker {
+        margin-bottom: 0.75rem;
+      }
+      .badge-paid {
+        color: var(--primary-dark);
+        font-weight: 600;
+      }
+      .badge-pending {
+        color: #b3261e;
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
     <header>
       <h1>WhatDomi · Administración</h1>
-      <p>Monitoreo en vivo de los pedidos. La asignación es automática; esto es solo para ver el estado y, si hace falta, reasignar o cancelar manualmente.</p>
+      <p>Monitoreo en vivo de los pedidos, tarifas/comisión configurables, y liquidación diaria de cada domiciliario.</p>
     </header>
 
     <main>
-      <section>
+      <section id="admin-key-section">
+        <h2>Clave de administrador</h2>
+        <p class="hint">Si el backend tiene <code>ADMIN_API_KEY</code> configurada, pégala aquí (se guarda solo en este navegador).</p>
+        <form id="admin-key-form" style="display:flex; gap:0.5rem;">
+          <input type="password" id="admin-key-input" placeholder="X-Admin-Key" style="flex:1;" />
+          <button type="submit">Guardar</button>
+        </form>
+      </section>
+
+      <section id="stats-section">
+        <h2>Resumen</h2>
+        <div class="filters" id="stats-range-filters"></div>
+        <div class="stats-grid" id="stats-grid"><p class="empty">Cargando...</p></div>
+      </section>
+
+      <section id="config-section">
+        <h2>Tarifas y comisión (editable)</h2>
+        <form id="config-form" class="config-grid">
+          <label>Tarifa base<input type="number" name="baseFare" min="0" required /></label>
+          <label>Costo por km<input type="number" name="pricePerKm" min="0" required /></label>
+          <label>Tarifa mínima<input type="number" name="minFare" min="0" required /></label>
+          <label>Comisión (%)<input type="number" name="commissionPercentage" min="0" max="100" step="0.1" required /></label>
+          <label>Moneda<input type="text" name="currency" required /></label>
+        </form>
+        <button type="submit" form="config-form" style="margin-top:0.75rem;">Guardar configuración</button>
+        <p id="config-status" class="status"></p>
+      </section>
+
+      <section id="settlements-section">
+        <h2>Servicios y liquidación por domiciliario</h2>
+        <div class="date-picker">
+          <label>Fecha <input type="date" id="settlements-date" /></label>
+        </div>
+        <div id="settlements-container"><p class="empty">Cargando...</p></div>
+        <h3>Detalle de servicios entregados ese día</h3>
+        <div id="service-log-container"><p class="empty">Cargando...</p></div>
+      </section>
+
+      <section id="orders-section">
+        <h2>Pedidos en vivo</h2>
+        <p class="hint">La asignación es automática; esto es solo para ver el estado y, si hace falta, reasignar o cancelar manualmente.</p>
         <div class="filters" id="filters"></div>
         <div id="orders-container"><p class="empty">Cargando pedidos...</p></div>
       </section>

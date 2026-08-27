@@ -1,4 +1,4 @@
-import { calculateFare, FareConfig } from "../domain/fare";
+import { calculateFare } from "../domain/fare";
 import { GeocodeResult, GeocodingService } from "../domain/geocoding";
 import { haversineDistanceMeters } from "../domain/geo";
 import { DispatchService } from "../domain/dispatch";
@@ -74,7 +74,6 @@ export class WhatsAppConversationService {
     private readonly repo: DispatchRepository,
     private readonly dispatch: DispatchService,
     private readonly geocoding: GeocodingService,
-    private readonly fareConfig: FareConfig,
     private readonly store: ConversationStore = new InMemoryConversationStore(),
     private readonly locationContext: { city?: string; country?: string } = {}
   ) {}
@@ -149,7 +148,11 @@ export class WhatsAppConversationService {
     }
 
     const distanceMeters = haversineDistanceMeters(originPoint, destinationPoint);
-    const quote = calculateFare(distanceMeters, this.fareConfig);
+    // Se lee la config vigente en cada cotización (no una copia fija al
+    // arrancar el servidor), para que un cambio del admin en el panel
+    // aplique de inmediato a la siguiente conversación.
+    const platformConfig = await this.repo.getPlatformConfig();
+    const quote = calculateFare(distanceMeters, platformConfig);
 
     const business = await this.repo.findOrCreateBusinessByPhone(phone, state.requesterName ?? "Solicitante");
     const order = await this.dispatch.createQuote({

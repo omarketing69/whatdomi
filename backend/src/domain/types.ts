@@ -1,3 +1,18 @@
+/**
+ * WhatDomi tiene 3 niveles de acceso:
+ *  - `admin`: el dueño de la plataforma. No es una fila más en `businesses`
+ *    ni en `couriers` — se modela como acceso a `/api/admin/*` protegido
+ *    por una clave compartida (`ADMIN_API_KEY`, ver `requireAdminKey`),
+ *    no como una cuenta con usuario/contraseña. Configura tarifas y
+ *    comisión, y ve el monitoreo/estadísticas globales.
+ *  - `business`: quien solicita domicilios (entidad `Business`).
+ *  - `courier`: quien los entrega (entidad `Courier`).
+ * Se modelan como entidades separadas (no una tabla `users` con un campo
+ * `role`) porque sus datos y ciclo de vida no se parecen en nada — ver
+ * `docs/ARCHITECTURE.md` §2 para la justificación completa.
+ */
+export type PlatformRole = "admin" | "business" | "courier";
+
 export type OrderStatus =
   | "CREATED"
   | "QUOTED"
@@ -110,4 +125,65 @@ export interface CreateOrderInput {
   distanceMeters?: number;
   fare?: number;
   currency?: string;
+}
+
+/**
+ * Recargo declarado (ej. "nocturno", "zona rural") que el admin puede
+ * registrar desde el panel. Deliberadamente NO se aplica todavía en
+ * `calculateFare` — es una extensión declarada, no una regla activa; ver
+ * docs/ARCHITECTURE.md §6.
+ */
+export interface PlatformSurcharge {
+  id: string;
+  name: string;
+  description?: string;
+  active: boolean;
+}
+
+/**
+ * Configuración de tarifas y comisión de toda la plataforma, editable por
+ * el admin (nunca hardcodeada). Es una fila única (singleton) tanto en
+ * Postgres (`platform_config`, id fijo) como en el repositorio en memoria.
+ */
+export interface PlatformConfig {
+  baseFare: number;
+  pricePerKm: number;
+  minFare: number;
+  /** % de lo cobrado en cada servicio que el domiciliario le debe a la plataforma. */
+  commissionPercentage: number;
+  currency: string;
+  surcharges: PlatformSurcharge[];
+  updatedAt: Date;
+}
+
+export interface UpdatePlatformConfigInput {
+  baseFare?: number;
+  pricePerKm?: number;
+  minFare?: number;
+  commissionPercentage?: number;
+  currency?: string;
+  surcharges?: PlatformSurcharge[];
+}
+
+export type SettlementStatus = "PENDING" | "PAID";
+
+/**
+ * Liquidación diaria de comisión de un domiciliario: cuánto cobró ese día
+ * en servicios entregados, cuánto de eso le corresponde a la plataforma
+ * (`commissionPercentage` queda congelado con la tasa vigente al momento
+ * del cálculo), y si ya la pagó. Mientras `status` sea `PENDING` se puede
+ * recalcular (llegan más entregas ese mismo día); una vez `PAID` queda
+ * congelada — ver `SettlementService`.
+ */
+export interface CourierSettlement {
+  courierId: string;
+  /** Fecha en formato YYYY-MM-DD (ver `domain/date.ts`). */
+  date: string;
+  serviceCount: number;
+  totalEarned: number;
+  commissionPercentage: number;
+  commissionAmount: number;
+  status: SettlementStatus;
+  paidAt: Date | null;
+  updatedAt: Date;
 }

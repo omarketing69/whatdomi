@@ -1,9 +1,12 @@
 import { DispatchRepository } from "../domain/repository";
 import { haversineDistanceMeters } from "../domain/geo";
 import { generateActivationCode } from "../domain/activation-code";
+import { isoDate } from "../domain/date";
+import { loadFareConfigFromEnv } from "../domain/fare";
 import {
   Business,
   Courier,
+  CourierSettlement,
   CourierWithDistance,
   CreateBusinessInput,
   CreateCourierInput,
@@ -11,7 +14,13 @@ import {
   GeoPoint,
   Order,
   OrderStatus,
+  PlatformConfig,
+  UpdatePlatformConfigInput,
 } from "../domain/types";
+
+function settlementKey(courierId: string, date: string): string {
+  return `${courierId}|${date}`;
+}
 
 let idCounter = 0;
 function nextId(prefix: string): string {
@@ -38,6 +47,13 @@ export class InMemoryDispatchRepository implements DispatchRepository {
   private orders = new Map<string, Order>();
   private couriers = new Map<string, Courier>();
   private businesses = new Map<string, Business>();
+  private settlements = new Map<string, CourierSettlement>();
+  private platformConfig: PlatformConfig = {
+    ...loadFareConfigFromEnv(),
+    commissionPercentage: Number(process.env.COMMISSION_PERCENTAGE ?? 10),
+    surcharges: [],
+    updatedAt: new Date(),
+  };
 
   async createBusiness(input: CreateBusinessInput): Promise<Business> {
     const business: Business = {
@@ -241,5 +257,95 @@ export class InMemoryDispatchRepository implements DispatchRepository {
   async getCourier(courierId: string): Promise<Courier | null> {
     const courier = this.couriers.get(courierId);
     return courier ? { ...courier } : null;
+  }
+
+  async getPlatformConfig(): Promise<PlatformConfig> {
+    return { ...this.platformConfig, surcharges: [...this.platformConfig.surcharges] };
+  }
+
+  async updatePlatformConfig(patch: UpdatePlatformConfigInput): Promise<PlatformConfig> {
+    this.platformConfig = { ...this.platformConfig, ...patch, updatedAt: new Date() };
+    return this.getPlatformConfig();
+  }
+
+  async listDeliveredOrders(filter?: { courierId?: string; date?: string }): Promise<Order[]> {
+    return Array.from(this.orders.values())
+      .filter((order) => order.status === "DELIVERED" && order.deliveredAt !== null)
+      .filter((order) => !filter?.courierId || order.courierId === filter.courierId)
+      .filter((order) => !filter?.date || isoDate(order.deliveredAt as Date) === filter.date)
+      .sort((a, b) => (a.deliveredAt as Date).getTime() - (b.deliveredAt as Date).getTime())
+      .map((order) => ({ ...order }));
+  }
+
+  async getServiceStats(
+    fromDate: string,
+    toDate: string
+  ): Promise<{ serviceCount: number; totalRevenue: number }> {
+    const delivered = Array.from(this.orders.values()).filter((order) => {
+      if (order.status !== "DELIVERED" || !order.deliveredAt) return false;
+      const day = isoDate(order.deliveredAt);
+      return day >= fromDate && day <= toDate;
+    });
+    return {
+      serviceCount: delivered.length,
+      totalRevenue: delivered.reduce((sum, order) => sum + (order.fare ?? 0), 0),
+    };
+  }
+
+  async getSettlement(courierId: string, date: string): Promise<CourierSettlement | null> {
+    const settlement = this.settlements.get(settlementKey(courierId, date));
+    return settlement ? { ...settlement } : null;
+  }
+
+  async upsertSettlement(
+    courierId: string,
+    date: string,
+    data: {
+      serviceCount: number;
+      totalEarned: number;
+      commissionPercentage: number;
+      commissionAmount: number;
+    }
+  ): Promise<CourierSettlement> {
+    const key = settlementKey(courierId, date);
+    const existing = this.settlements.get(key);
+    if (existing?.status === "PAID") return { ...existing };
+
+    const updated: CourierSettlement = {
+      courierId,
+      date,
+      serviceCount: data.serviceCount,
+      totalEarned: data.totalEarned,
+      commissionPercentage: data.commissionPercentage,
+      commissionAmount: data.commissionAmount,
+      status: "PENDING",
+      paidAt: existing?.paidAt ?? null,
+      updatedAt: new Date(),
+    };
+    this.settlements.set(key, updated);
+    return { ...updated };
+  }
+
+  async markSettlementPaid(courierId: string, date: string): Promise<CourierSettlement | null> {
+    const key = settlementKey(courierId, date);
+    const existing = this.settlements.get(key);
+    if (!existing) return null;
+    const updated: CourierSettlement = { ...existing, status: "PAID", paidAt: new Date(), updatedAt: new Date() };
+    this.settlements.set(key, updated);
+    return { ...updated };
+  }
+
+  async listPendingSettlementsBefore(courierId: string, date: string): Promise<CourierSettlement[]> {
+    return Array.from(this.settlements.values())
+      .filter((s) => s.courierId === courierId && s.status === "PENDING" && s.date < date)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((s) => ({ ...s }));
+  }
+
+  async listSettlements(filter?: { date?: string }): Promise<CourierSettlement[]> {
+    return Array.from(this.settlements.values())
+      .filter((s) => !filter?.date || s.date === filter.date)
+      .sort((a, b) => b.date.localeCompare(a.date) || b.commissionAmount - a.commissionAmount)
+      .map((s) => ({ ...s }));
   }
 }

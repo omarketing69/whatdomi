@@ -2,8 +2,8 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { createApp } from "./api/app";
 import { combineNotifiers, DispatchService } from "./domain/dispatch";
-import { loadFareConfigFromEnv } from "./domain/fare";
 import { GeocodingService } from "./domain/geocoding";
+import { SettlementService } from "./domain/settlement";
 import { getPool } from "./infra/pool";
 import { AnthropicAddressNormalizer } from "./infra/geocoding/anthropic-normalizer";
 import { NominatimGeocodingProvider } from "./infra/geocoding/nominatim-provider";
@@ -19,6 +19,7 @@ const SEARCH_RADIUS_METERS = Number(process.env.SEARCH_RADIUS_METERS ?? 5_000);
 const MAX_CANDIDATES = Number(process.env.MAX_CANDIDATES ?? 5);
 
 const repo = new PostgresDispatchRepository(getPool());
+const settlements = new SettlementService(repo);
 
 const httpServer = createServer();
 const io = createSocketServer(httpServer);
@@ -29,7 +30,7 @@ const notifier = combineNotifiers(
   createWhatsAppDispatchNotifier(repo, whatsappSender)
 );
 
-const dispatch = new DispatchService(repo, notifier, SEARCH_RADIUS_METERS, MAX_CANDIDATES);
+const dispatch = new DispatchService(repo, notifier, SEARCH_RADIUS_METERS, MAX_CANDIDATES, settlements);
 
 // Si hay ANTHROPIC_API_KEY, se usa un LLM para interpretar direcciones
 // informales antes de geocodificarlas; si no, se manda el texto tal cual
@@ -38,9 +39,11 @@ const addressNormalizer = process.env.ANTHROPIC_API_KEY
   ? new AnthropicAddressNormalizer(process.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_MODEL)
   : new PassthroughAddressNormalizer();
 const geocoding = new GeocodingService(addressNormalizer, new NominatimGeocodingProvider());
-const fareConfig = loadFareConfigFromEnv();
 
-const conversation = new WhatsAppConversationService(repo, dispatch, geocoding, fareConfig, undefined, {
+// La tarifa y la comisión ya no se leen de variables de entorno en cada
+// cotización: viven en la tabla `platform_config` (editable por el admin
+// desde /api/admin/config), sembrada por db/schema.sql.
+const conversation = new WhatsAppConversationService(repo, dispatch, geocoding, undefined, {
   city: process.env.DEFAULT_CITY,
   country: process.env.DEFAULT_COUNTRY,
 });

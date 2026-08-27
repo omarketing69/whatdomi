@@ -4,6 +4,7 @@ import {
   CourierNotFoundError,
   InvalidActivationCodeError,
 } from "../src/domain/courier-activation";
+import { PendingSettlementError, SettlementService } from "../src/domain/settlement";
 import { InMemoryDispatchRepository } from "../src/testing/in-memory-repository";
 
 describe("activación de domiciliarios con código", () => {
@@ -46,5 +47,61 @@ describe("activación de domiciliarios con código", () => {
     const deactivated = await service.deactivate(courier.id);
 
     expect(deactivated.isActive).toBe(false);
+  });
+
+  it("bloquea la activación si el domiciliario tiene comisión pendiente de un día anterior", async () => {
+    const repo = new InMemoryDispatchRepository();
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000020" });
+    const settlements = new SettlementService(repo);
+
+    // Simula un día de trabajo anterior sin liquidar.
+    const business = await repo.createBusiness({ name: "Negocio", phone: "+573000000021" });
+    const order = await repo.createOrder({
+      businessId: business.id,
+      pickup: { lat: 4.65, lng: -74.08 },
+      pickupAddress: "A",
+      dropoff: { lat: 4.66, lng: -74.09 },
+      dropoffAddress: "B",
+      fare: 5000,
+      currency: "COP",
+    });
+    await repo.updateOrderStatus(order.id, "SEARCHING");
+    await repo.tryAssignOrder(order.id, courier.id);
+    await repo.updateOrderStatus(order.id, "DELIVERED", { deliveredAt: new Date("2026-01-10T12:00:00Z") });
+    await settlements.recomputeSettlement(courier.id, "2026-01-10");
+
+    const service = new CourierActivationService(repo, settlements, () => new Date("2026-01-11T09:00:00Z"));
+
+    await expect(service.activate(courier.id, courier.activationCode)).rejects.toBeInstanceOf(
+      PendingSettlementError
+    );
+    const stillInactive = await repo.getCourier(courier.id);
+    expect(stillInactive?.isActive).toBe(false);
+  });
+
+  it("permite activarse de nuevo una vez que paga la comisión pendiente", async () => {
+    const repo = new InMemoryDispatchRepository();
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000022" });
+    const settlements = new SettlementService(repo);
+
+    const business = await repo.createBusiness({ name: "Negocio", phone: "+573000000023" });
+    const order = await repo.createOrder({
+      businessId: business.id,
+      pickup: { lat: 4.65, lng: -74.08 },
+      pickupAddress: "A",
+      dropoff: { lat: 4.66, lng: -74.09 },
+      dropoffAddress: "B",
+      fare: 5000,
+      currency: "COP",
+    });
+    await repo.updateOrderStatus(order.id, "SEARCHING");
+    await repo.tryAssignOrder(order.id, courier.id);
+    await repo.updateOrderStatus(order.id, "DELIVERED", { deliveredAt: new Date("2026-01-10T12:00:00Z") });
+    await settlements.recomputeSettlement(courier.id, "2026-01-10");
+    await settlements.markPaid(courier.id, "2026-01-10");
+
+    const service = new CourierActivationService(repo, settlements, () => new Date("2026-01-11T09:00:00Z"));
+    const activated = await service.activate(courier.id, courier.activationCode);
+    expect(activated.isActive).toBe(true);
   });
 });

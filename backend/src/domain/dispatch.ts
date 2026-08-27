@@ -1,4 +1,6 @@
+import { isoDate } from "./date";
 import { DispatchRepository } from "./repository";
+import { SettlementService } from "./settlement";
 import { CourierWithDistance, CreateOrderInput, Order, OrderStatus } from "./types";
 
 export const DEFAULT_SEARCH_RADIUS_METERS = 5_000;
@@ -67,7 +69,9 @@ export class DispatchService {
     private readonly repo: DispatchRepository,
     private readonly notifier: DispatchNotifier = noopNotifier,
     private readonly searchRadiusMeters: number = DEFAULT_SEARCH_RADIUS_METERS,
-    private readonly maxCandidates: number = DEFAULT_MAX_CANDIDATES
+    private readonly maxCandidates: number = DEFAULT_MAX_CANDIDATES,
+    /** Opcional para no romper tests/usos que no necesitan comisión (ver markDelivered). */
+    private readonly settlements?: SettlementService
   ) {}
 
   /**
@@ -147,8 +151,19 @@ export class DispatchService {
     return this.transitionStatus(orderId, "IN_PROGRESS");
   }
 
+  /**
+   * Al entregar, además de cerrar el pedido, se recalcula la liquidación
+   * diaria de comisión del domiciliario para el día de la entrega (ver
+   * `SettlementService.recomputeSettlement`) — así el monto que le
+   * corresponde pagar a la plataforma queda al día apenas termina cada
+   * servicio, no al final del día en un proceso aparte.
+   */
   async markDelivered(orderId: string): Promise<Order> {
-    return this.transitionStatus(orderId, "DELIVERED", { deliveredAt: new Date() });
+    const updated = await this.transitionStatus(orderId, "DELIVERED", { deliveredAt: new Date() });
+    if (updated.courierId && this.settlements) {
+      await this.settlements.recomputeSettlement(updated.courierId, isoDate(updated.deliveredAt ?? new Date()));
+    }
+    return updated;
   }
 
   async cancelOrder(orderId: string): Promise<Order> {
