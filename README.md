@@ -1,4 +1,4 @@
-# WhatDomi
+# Domi911
 
 Plataforma de despacho de domiciliarios (repartidores en moto) para
 restaurantes y tiendas online en ciudades pequeñas de Latinoamérica.
@@ -55,7 +55,7 @@ ver `docs/ARCHITECTURE.md` §2.
 ## Estructura del repo
 
 ```
-whatdomi/
+domi911/
 ├── backend/            API (Node.js + TypeScript + Express + Postgres/PostGIS)
 ├── frontend/
 │   ├── index.html         Login / registro del negocio
@@ -84,7 +84,7 @@ docker compose up -d db
 ```
 
 Esto levanta Postgres+PostGIS en `localhost:5432` con las credenciales de
-`.env.example` (usuario/clave `whatdomi`, base `whatdomi`).
+`.env.example` (usuario/clave `domi911`, base `domi911`).
 
 ### 2. Backend
 
@@ -130,7 +130,7 @@ npx serve .              # o: python3 -m http.server 5173
   ubicación en vivo, recibir/aceptar ofertas, marcar recogido/entregado).
 
 Si tu backend no corre en `http://localhost:3000`, ajusta
-`window.WHATDOMI_API_URL` en el `<script>` de cada página.
+`window.DOMI911_API_URL` en el `<script>` de cada página.
 
 ### 4. Probar el flujo completo a mano (negocio con login + domiciliario)
 

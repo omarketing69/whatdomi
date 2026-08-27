@@ -68,7 +68,7 @@ async function captureFaceDescriptor(videoEl) {
   return Array.from(detection.descriptor);
 }
 
-window.WhatDomiFace = {
+window.Domi911Face = {
   FACE_API_AVAILABLE,
   loadFaceModels,
   startCamera,

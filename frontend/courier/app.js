@@ -1,5 +1,5 @@
-const API_BASE_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
-const STORAGE_KEY = "whatdomi.courier";
+const API_BASE_URL = window.DOMI911_API_URL || "http://localhost:3000";
+const STORAGE_KEY = "domi911.courier";
 const LOCATION_INTERVAL_MS = 15_000;
 
 const registerForm = document.getElementById("register-form");
@@ -106,7 +106,7 @@ registerForm.addEventListener("submit", async (event) => {
 // --- Captura del rostro de referencia (una vez, tras el registro) ---
 // Extracción 100% client-side con face-api.js (frontend/courier/face.js);
 // solo el descriptor de 128 números viaja al backend, nunca la foto.
-const faceApiAvailable = typeof window.WhatDomiFace !== "undefined" && window.WhatDomiFace.FACE_API_AVAILABLE;
+const faceApiAvailable = typeof window.Domi911Face !== "undefined" && window.Domi911Face.FACE_API_AVAILABLE;
 if (!faceApiAvailable) {
   console.warn("[face] face-api.js no disponible; la captura de rostro queda deshabilitada en esta sesión.");
 }
@@ -115,7 +115,7 @@ faceRegisterStartBtn.addEventListener("click", async () => {
   try {
     faceRegisterStatus.textContent = "Encendiendo cámara...";
     faceRegisterStatus.className = "status";
-    faceRegisterStream = await window.WhatDomiFace.startCamera(faceRegisterVideo);
+    faceRegisterStream = await window.Domi911Face.startCamera(faceRegisterVideo);
     faceRegisterCaptureBtn.disabled = false;
     faceRegisterStatus.textContent = "Cámara lista. Mira al frente y presiona \"Capturar rostro\".";
   } catch (err) {
@@ -135,7 +135,7 @@ faceRegisterCaptureBtn.addEventListener("click", async () => {
 
   faceRegisterStatus.textContent = "Analizando rostro...";
   faceRegisterStatus.className = "status";
-  const descriptor = await window.WhatDomiFace.captureFaceDescriptor(faceRegisterVideo);
+  const descriptor = await window.Domi911Face.captureFaceDescriptor(faceRegisterVideo);
   if (!descriptor) {
     faceRegisterStatus.textContent = "No detectamos tu rostro. Acércate a la cámara, mejora la luz e intenta de nuevo.";
     faceRegisterStatus.className = "status error";
@@ -160,7 +160,7 @@ faceActivateStartBtn.addEventListener("click", async () => {
   try {
     faceActivateStatus.textContent = "Encendiendo cámara...";
     faceActivateStatus.className = "status";
-    faceActivateStream = await window.WhatDomiFace.startCamera(faceActivateVideo);
+    faceActivateStream = await window.Domi911Face.startCamera(faceActivateVideo);
     faceActivateCaptureBtn.disabled = false;
     faceActivateStatus.textContent = "Cámara lista. Mira al frente y presiona \"Verificar rostro\".";
   } catch (err) {
@@ -172,7 +172,7 @@ faceActivateStartBtn.addEventListener("click", async () => {
 faceActivateCaptureBtn.addEventListener("click", async () => {
   faceActivateStatus.textContent = "Analizando rostro...";
   faceActivateStatus.className = "status";
-  const descriptor = await window.WhatDomiFace.captureFaceDescriptor(faceActivateVideo);
+  const descriptor = await window.Domi911Face.captureFaceDescriptor(faceActivateVideo);
   if (!descriptor) {
     faceActivateStatus.textContent = "No detectamos tu rostro. Acércate a la cámara, mejora la luz e intenta de nuevo.";
     faceActivateStatus.className = "status error";

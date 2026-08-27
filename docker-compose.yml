@@ -3,18 +3,18 @@ services:
     image: postgis/postgis:16-3.4
     restart: unless-stopped
     environment:
-      POSTGRES_USER: whatdomi
-      POSTGRES_PASSWORD: whatdomi
-      POSTGRES_DB: whatdomi
+      POSTGRES_USER: domi911
+      POSTGRES_PASSWORD: domi911
+      POSTGRES_DB: domi911
     ports:
       - "5432:5432"
     volumes:
-      - whatdomi_db_data:/var/lib/postgresql/data
+      - domi911_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U whatdomi -d whatdomi"]
+      test: ["CMD-SHELL", "pg_isready -U domi911 -d domi911"]
       interval: 5s
       timeout: 5s
       retries: 10
 
 volumes:
-  whatdomi_db_data:
+  domi911_db_data:

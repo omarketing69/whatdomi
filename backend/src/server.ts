@@ -28,7 +28,7 @@ if (!process.env.JWT_SECRET) {
       "OBLIGATORIO configurarlo en cualquier despliegue real (ver .env.example)."
   );
 }
-const JWT_SECRET = process.env.JWT_SECRET ?? "whatdomi-dev-secret-cambia-esto";
+const JWT_SECRET = process.env.JWT_SECRET ?? "domi911-dev-secret-cambia-esto";
 
 const repo = new PostgresDispatchRepository(getPool());
 const settlements = new SettlementService(repo);
@@ -75,5 +75,5 @@ const app = createApp({ repo, dispatch, businessAuth, tokens, courierTokens, geo
 httpServer.on("request", app);
 
 httpServer.listen(PORT, () => {
-  console.log(`WhatDomi backend escuchando en http://localhost:${PORT}`);
+  console.log(`Domi911 backend escuchando en http://localhost:${PORT}`);
 });

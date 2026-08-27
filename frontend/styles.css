@@ -4,8 +4,9 @@
   --card: #ffffff;
   --text: #1c1e21;
   --muted: #666a70;
-  --primary: #16794f;
-  --primary-dark: #0f5a39;
+  /* Colores de marca de Domi911: naranja (acción) y morado (acento/oscuro). */
+  --primary: #f2701d;
+  --primary-dark: #3c1f6e;
   --border: #d9dce0;
 }
 
@@ -41,6 +42,18 @@ header {
 header h1 {
   margin: 0 0 0.25rem;
   color: var(--primary-dark);
+}
+
+.brand-logo {
+  height: 40px;
+  width: auto;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.brand-logo.brand-logo-hero {
+  height: 180px;
+  margin-bottom: 0.5rem;
 }
 
 header p {

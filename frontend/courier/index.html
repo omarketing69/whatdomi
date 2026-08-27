@@ -3,16 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>WhatDomi Domiciliario</title>
+    <title>Domi911 Domiciliario</title>
     <link rel="manifest" href="manifest.webmanifest" />
-    <meta name="theme-color" content="#16794f" />
+    <link rel="icon" href="../assets/favicon.ico" />
+    <link rel="apple-touch-icon" href="../assets/icon-192.png" />
+    <meta name="theme-color" content="#f2701d" />
     <link rel="stylesheet" href="../styles.css" />
     <style>
       .offer {
         border: 2px solid var(--primary);
         border-radius: 10px;
         padding: 1rem;
-        background: #eef8f2;
+        background: #fdeee0;
       }
       .pill {
         display: inline-block;
@@ -22,7 +24,7 @@
         font-weight: 600;
       }
       .pill.online {
-        background: #d7f2e3;
+        background: #f6dcc4;
         color: var(--primary-dark);
       }
       .pill.offline {
@@ -47,7 +49,8 @@
   </head>
   <body>
     <header>
-      <h1>WhatDomi · Domiciliario</h1>
+      <img src="../assets/logo-mark.png" alt="Domi911" class="brand-logo" />
+      <h1 style="font-size: 1.1rem; margin-top: 0.4rem;">Domiciliario</h1>
       <p>Regístrate una vez con tu cédula, y actívate con ella cuando empieces a trabajar.</p>
     </header>
 
@@ -111,7 +114,7 @@
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
-      window.WHATDOMI_API_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
+      window.DOMI911_API_URL = window.DOMI911_API_URL || "http://localhost:3000";
     </script>
     <!-- Vendorizado localmente (no CDN), mismo motivo que Leaflet: ver docs/ARCHITECTURE.md §10. -->
     <script src="../vendor/face-api/face-api.min.js"></script>

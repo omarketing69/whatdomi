@@ -10,7 +10,7 @@ const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
  * de Google Maps o Mapbox sin tocar el resto del sistema.
  */
 export class NominatimGeocodingProvider implements GeocodingProvider {
-  constructor(private readonly userAgent: string = "WhatDomi/0.1 (contacto@whatdomi.example)") {}
+  constructor(private readonly userAgent: string = "Domi911/0.1 (contacto@domi911.example)") {}
 
   async geocode(query: string): Promise<GeocodeResult | null> {
     const url = new URL(NOMINATIM_URL);

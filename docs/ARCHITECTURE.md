@@ -1,4 +1,4 @@
-# Arquitectura de WhatDomi
+# Arquitectura de Domi911
 
 Este documento describe la arquitectura técnica del MVP y las decisiones de
 stack detrás de ella. Para instrucciones de instalación y ejecución ver el
@@ -79,7 +79,7 @@ canal — ver §11 sobre por qué ya no hay un bot de WhatsApp):
 
 ## 2. Roles, entidades y ciclo de vida
 
-WhatDomi tiene 3 niveles de acceso (`PlatformRole` en `types.ts`, ver el
+Domi911 tiene 3 niveles de acceso (`PlatformRole` en `types.ts`, ver el
 comentario ahí para el detalle):
 
 - **Admin**: el dueño de la plataforma. Configura tarifa/comisión y ve

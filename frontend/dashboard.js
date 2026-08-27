@@ -2,8 +2,8 @@
 // un bot de WhatsApp. Cotiza (recogida = ubicación registrada del negocio,
 // salvo que se sobreescriba puntualmente) → confirma → arranca la misma
 // cascada de asignación automática de siempre — ver docs/ARCHITECTURE.md §11.
-const API_BASE_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
-const SESSION_KEY = "whatdomi.session";
+const API_BASE_URL = window.DOMI911_API_URL || "http://localhost:3000";
+const SESSION_KEY = "domi911.session";
 const MAP_POLL_MS = 4000;
 const ORDER_POLL_MS = 3000;
 
@@ -310,7 +310,7 @@ let trackingTimer = null;
 const courierIcon = mapAvailable
   ? new L.DivIcon({
       className: "",
-      html: '<div style="width:12px;height:12px;border-radius:50%;background:#16794f;border:2px solid white;box-shadow:0 0 2px rgba(0,0,0,.5);"></div>',
+      html: '<div style="width:12px;height:12px;border-radius:50%;background:#f2701d;border:2px solid white;box-shadow:0 0 2px rgba(0,0,0,.5);"></div>',
       iconSize: [12, 12],
     })
   : null;
@@ -435,7 +435,7 @@ async function refreshAssignedCourierLocation() {
     if (trajectoryLine) {
       trajectoryLine.setLatLngs([latlng, targetLatLng]);
     } else {
-      trajectoryLine = L.polyline([latlng, targetLatLng], { color: "#16794f", dashArray: "6 6" }).addTo(map);
+      trajectoryLine = L.polyline([latlng, targetLatLng], { color: "#f2701d", dashArray: "6 6" }).addTo(map);
     }
     map.fitBounds([latlng, targetLatLng], { padding: [30, 30] });
   } catch {

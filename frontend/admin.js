@@ -1,6 +1,6 @@
-const API_BASE_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
+const API_BASE_URL = window.DOMI911_API_URL || "http://localhost:3000";
 const POLL_MS = 4000;
-const ADMIN_KEY_STORAGE = "whatdomi.adminKey";
+const ADMIN_KEY_STORAGE = "domi911.adminKey";
 
 const FILTERS = [
   { label: "Activos", statuses: ["CREATED", "QUOTED", "SEARCHING", "ASSIGNED", "IN_PROGRESS"] },

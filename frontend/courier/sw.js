@@ -2,7 +2,7 @@
 // en celulares de gama baja. No implementa estrategias de caché elaboradas
 // (el flujo de ofertas/ubicación necesita red igual, no tiene sentido
 // cachear esas respuestas).
-const CACHE_NAME = "whatdomi-courier-shell-v2";
+const CACHE_NAME = "domi911-courier-shell-v3";
 // Los modelos de face-api.js (../vendor/face-api/models/*, varios MB)
 // deliberadamente NO están en el shell: se piden bajo demanda la primera
 // vez que se usa la cámara, no en cada instalación de la PWA.
@@ -13,6 +13,9 @@ const SHELL_FILES = [
   "./face.js",
   "./manifest.webmanifest",
   "../styles.css",
+  "../assets/favicon.ico",
+  "../assets/icon-192.png",
+  "../assets/logo-mark.png",
   "../vendor/face-api/face-api.min.js",
 ];
 

@@ -2,8 +2,8 @@
 // ya no escribe su nombre por chat cada vez, se registra una sola vez
 // (con credenciales + su ubicación como recogida por defecto) y opera
 // desde dashboard.html — ver docs/ARCHITECTURE.md §11.
-const API_BASE_URL = window.WHATDOMI_API_URL || "http://localhost:3000";
-const SESSION_KEY = "whatdomi.session"; // { token, business }
+const API_BASE_URL = window.DOMI911_API_URL || "http://localhost:3000";
+const SESSION_KEY = "domi911.session"; // { token, business }
 
 const tabLogin = document.getElementById("tab-login");
 const tabRegister = document.getElementById("tab-register");

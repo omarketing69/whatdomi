@@ -1,4 +1,4 @@
--- Esquema inicial de WhatDomi.
+-- Esquema inicial de Domi911.
 -- Usa PostGIS para las consultas de "domiciliarios activos más cercanos".
 -- Se aplica con: npm run db:migrate (ver scripts/migrate.ts) o directamente:
 --   psql "$DATABASE_URL" -f db/schema.sql

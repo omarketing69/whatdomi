@@ -1,5 +1,5 @@
 /**
- * WhatDomi tiene 3 niveles de acceso:
+ * Domi911 tiene 3 niveles de acceso:
  *  - `admin`: el dueño de la plataforma. No es una fila más en `businesses`
  *    ni en `couriers` — se modela como acceso a `/api/admin/*` protegido
  *    por una clave compartida (`ADMIN_API_KEY`, ver `requireAdminKey`),
