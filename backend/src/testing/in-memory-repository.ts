@@ -1,6 +1,5 @@
 import { DispatchRepository } from "../domain/repository";
 import { haversineDistanceMeters } from "../domain/geo";
-import { generateActivationCode } from "../domain/activation-code";
 import { isoDate } from "../domain/date";
 import { loadFareConfigFromEnv } from "../domain/fare";
 import {
@@ -83,6 +82,7 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     return this.seedCourier({
       name: input.name,
       phone: input.phone,
+      nationalId: input.nationalId,
       vehiclePlate: input.vehiclePlate ?? null,
       isActive: false,
       lat: null,
@@ -98,7 +98,7 @@ export class InMemoryDispatchRepository implements DispatchRepository {
       phone: courier.phone ?? "0000000000",
       vehiclePlate: courier.vehiclePlate ?? null,
       isActive: courier.isActive ?? true,
-      activationCode: courier.activationCode ?? generateActivationCode(),
+      nationalId: courier.nationalId ?? nextId("cedula"),
       lat: courier.lat ?? null,
       lng: courier.lng ?? null,
       lastSeenAt: courier.lastSeenAt ?? new Date(),
@@ -192,6 +192,22 @@ export class InMemoryDispatchRepository implements DispatchRepository {
     if (order.status !== "SEARCHING" || order.courierId !== null) {
       return null;
     }
+
+    const updated: Order = {
+      ...order,
+      status: "ASSIGNED",
+      courierId,
+      assignedAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.orders.set(orderId, updated);
+    return { ...updated };
+  }
+
+  async forceAssignOrder(orderId: string, courierId: string): Promise<Order | null> {
+    const order = this.orders.get(orderId);
+    if (!order) return null;
+    if (order.status !== "UNASSIGNED" || order.courierId !== null) return null;
 
     const updated: Order = {
       ...order,

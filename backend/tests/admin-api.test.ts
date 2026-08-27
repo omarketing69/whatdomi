@@ -93,7 +93,7 @@ describe("registro de servicios y liquidaciones", () => {
     const { app } = makeApp(repo);
 
     const business = await repo.createBusiness({ name: "Negocio", phone: "+573000000030" });
-    const courier = await repo.createCourier({ name: "Carlos", phone: "+573000000031" });
+    const courier = await repo.createCourier({ name: "Carlos", phone: "+573000000031", nationalId: "573000000031" });
     const order = await repo.createOrder({
       businessId: business.id,
       pickup: { lat: 4.65, lng: -74.08 },
@@ -121,7 +121,7 @@ describe("registro de servicios y liquidaciones", () => {
   it("permite pagar una liquidación pendiente", async () => {
     const repo = new InMemoryDispatchRepository();
     const { app } = makeApp(repo);
-    const courier = await repo.createCourier({ name: "Carlos", phone: "+573000000032" });
+    const courier = await repo.createCourier({ name: "Carlos", phone: "+573000000032", nationalId: "573000000032" });
     await repo.upsertSettlement(courier.id, "2026-02-01", {
       serviceCount: 1,
       totalEarned: 5000,
@@ -148,7 +148,7 @@ describe("estadísticas agregadas", () => {
     const { app } = makeApp(repo);
 
     const business = await repo.createBusiness({ name: "Negocio", phone: "+573000000033" });
-    const courier = await repo.createCourier({ name: "Carlos", phone: "+573000000034" });
+    const courier = await repo.createCourier({ name: "Carlos", phone: "+573000000034", nationalId: "573000000034" });
 
     for (const fare of [5000, 7000]) {
       const order = await repo.createOrder({

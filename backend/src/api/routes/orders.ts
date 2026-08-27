@@ -37,6 +37,7 @@ const ORDER_STATUS_VALUES = [
   "DELIVERED",
   "CANCELLED",
   "NO_COURIERS_AVAILABLE",
+  "UNASSIGNED",
 ] as const;
 
 export function createOrdersRouter(dispatch: DispatchService): Router {
@@ -158,7 +159,8 @@ export function createOrdersRouter(dispatch: DispatchService): Router {
   /**
    * Fallback manual desde el tablero de administración: el camino
    * principal de asignación es automático, esto es solo para cuando el
-   * domiciliario asignado no puede cumplir y hay que reintentar.
+   * domiciliario asignado no puede cumplir y hay que reintentar la
+   * cascada completa desde cero (excluyéndolo).
    */
   router.post(
     "/:orderId/reassign",
@@ -169,6 +171,31 @@ export function createOrdersRouter(dispatch: DispatchService): Router {
         return res.json({ order, candidatesOffered: candidates.length });
       } catch (err) {
         if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
+        throw err;
+      }
+    })
+  );
+
+  /**
+   * Última instancia: la cascada automática se agotó (pedido `UNASSIGNED`)
+   * sin que nadie aceptara, y el admin elige directamente al domiciliario.
+   * Es el único endpoint de todo el sistema donde un humano asigna a mano.
+   */
+  router.post(
+    "/:orderId/assign",
+    requireAdminKey,
+    asyncHandler(async (req, res) => {
+      const parsed = acceptOrderSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.flatten() });
+      }
+
+      try {
+        const order = await dispatch.manuallyAssignOrder(req.params.orderId, parsed.data.courierId);
+        return res.json({ order });
+      } catch (err) {
+        if (err instanceof OrderNotFoundError) return res.status(404).json({ error: err.message });
+        if (err instanceof OrderAlreadyTakenError) return res.status(409).json({ error: err.message });
         throw err;
       }
     })

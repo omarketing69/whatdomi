@@ -21,7 +21,15 @@ export type OrderStatus =
   | "IN_PROGRESS"
   | "DELIVERED"
   | "CANCELLED"
-  | "NO_COURIERS_AVAILABLE";
+  | "NO_COURIERS_AVAILABLE"
+  /**
+   * Se agotó la cascada de candidatos (cada uno tuvo su ventana de 60s
+   * para aceptar, ver DispatchService) y ninguno aceptó. Requiere
+   * asignación manual desde el panel de admin — el único caso en todo el
+   * sistema donde un humano asigna a mano, como fallback de última
+   * instancia, nunca como camino principal.
+   */
+  | "UNASSIGNED";
 
 /**
  * No hay pasarela de pagos integrada en el MVP (se maneja manual/offline
@@ -47,16 +55,19 @@ export interface Business {
 export interface Courier {
   id: string;
   name: string;
+  /** Número de WhatsApp del domiciliario: para contactarlo y para que negocio/cliente lo reciba al asignarse un pedido. */
   phone: string;
   vehiclePlate?: string | null;
   isActive: boolean;
   /**
-   * Código de activación entregado al domiciliario al registrarse en la PWA.
-   * Lo usa para "prender" su sesión (activarse) sin necesitar una cuenta con
-   * contraseña; ver `docs/ARCHITECTURE.md` §7 sobre por qué esto basta para
-   * el MVP y qué le falta para producción.
+   * Número de cédula de ciudadanía. Es el identificador único del
+   * domiciliario Y su credencial de activación: la usa tal cual para
+   * "prender" su sesión cada día (`POST /api/couriers/:id/activate`), no
+   * hay un código separado generado por el sistema. Ver
+   * `docs/ARCHITECTURE.md` §7 sobre por qué esto basta para el MVP y qué
+   * le falta para producción (y sobre tratarla como dato sensible).
    */
-  activationCode: string;
+  nationalId: string;
   lat: number | null;
   lng: number | null;
   lastSeenAt: Date | null;
@@ -102,6 +113,7 @@ export interface CreateBusinessInput {
 export interface CreateCourierInput {
   name: string;
   phone: string;
+  nationalId: string;
   vehiclePlate?: string;
 }
 

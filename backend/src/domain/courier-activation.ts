@@ -10,20 +10,21 @@ export class CourierNotFoundError extends Error {
   }
 }
 
-export class InvalidActivationCodeError extends Error {
+export class InvalidActivationCredentialError extends Error {
   constructor() {
-    super("Código de activación incorrecto");
-    this.name = "InvalidActivationCodeError";
+    super("Número de cédula incorrecto");
+    this.name = "InvalidActivationCredentialError";
   }
 }
 
 /**
  * Prende/apaga la disponibilidad de un domiciliario desde su PWA.
- * Activar requiere el código que se le entregó al registrarse (ver
- * `Courier.activationCode`) Y no tener comisión pendiente de días
- * anteriores (ver `SettlementService.canActivate`); desactivarse (dejar de
- * recibir pedidos) no necesita ni código ni estar al día, es una acción
- * sobre la propia sesión.
+ * Activar requiere su número de cédula (ver `Courier.nationalId` — es su
+ * identificador único Y su credencial de activación, no hay un código
+ * separado) Y no tener comisión pendiente de días anteriores (ver
+ * `SettlementService.canActivate`); desactivarse (dejar de recibir
+ * pedidos) no necesita ni cédula ni estar al día, es una acción sobre la
+ * propia sesión.
  */
 export class CourierActivationService {
   constructor(
@@ -32,10 +33,10 @@ export class CourierActivationService {
     private readonly now: () => Date = () => new Date()
   ) {}
 
-  async activate(courierId: string, activationCode: string): Promise<Courier> {
+  async activate(courierId: string, nationalId: string): Promise<Courier> {
     const courier = await this.repo.getCourier(courierId);
     if (!courier) throw new CourierNotFoundError(courierId);
-    if (courier.activationCode !== activationCode) throw new InvalidActivationCodeError();
+    if (courier.nationalId !== nationalId) throw new InvalidActivationCredentialError();
 
     const { allowed, pending } = await this.settlements.canActivate(courierId, isoDate(this.now()));
     if (!allowed) throw new PendingSettlementError(pending);

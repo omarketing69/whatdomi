@@ -52,10 +52,24 @@ export function createWhatsAppDispatchNotifier(
     );
   }
 
+  async function notifyUnassigned(order: Order): Promise<void> {
+    const business = await repo.getBusiness(order.businessId);
+    if (!business) return;
+    await send(
+      business.phone,
+      "😕 Ningún domiciliario cercano aceptó a tiempo. Un administrador va a asignar uno manualmente en cuanto pueda."
+    );
+  }
+
   return {
     onOrderOffered() {
       // El solicitante ya recibió la confirmación al aceptar la cotización;
-      // no hace falta notificarlo otra vez solo porque empezó la búsqueda.
+      // no hace falta notificarlo otra vez solo porque empezó la búsqueda
+      // (ni en cada paso de la cascada, para no saturarlo de mensajes).
+    },
+    onOfferExpired() {
+      // Es tráfico interno de la cascada (retirarle la oferta a quien no
+      // respondió a tiempo); no hay nada que decirle al negocio por esto.
     },
     onOrderStatusChanged() {},
     onOrderAssigned(order, winnerCourierId) {
@@ -66,6 +80,11 @@ export function createWhatsAppDispatchNotifier(
     onNoCouriersAvailable(order) {
       notifyNoCouriers(order).catch((err) =>
         console.error("[whatsapp] error notificando falta de domiciliarios", err)
+      );
+    },
+    onOrderUnassigned(order) {
+      notifyUnassigned(order).catch((err) =>
+        console.error("[whatsapp] error notificando que el pedido quedó sin asignar", err)
       );
     },
   };

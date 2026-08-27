@@ -28,7 +28,7 @@ describe("SettlementService.recomputeSettlement", () => {
   it("suma las tarifas de los pedidos entregados ese día y calcula la comisión con la tasa vigente", async () => {
     const repo = new InMemoryDispatchRepository();
     await repo.updatePlatformConfig({ commissionPercentage: 10 });
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000010" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000010", nationalId: "573000000010" });
 
     await deliverOrder(repo, courier.id, 5000, new Date("2026-01-10T12:00:00Z"));
     await deliverOrder(repo, courier.id, 7000, new Date("2026-01-10T18:00:00Z"));
@@ -48,7 +48,7 @@ describe("SettlementService.recomputeSettlement", () => {
   it("congela la liquidación una vez pagada: entregas tardías del mismo día no la reabren", async () => {
     const repo = new InMemoryDispatchRepository();
     await repo.updatePlatformConfig({ commissionPercentage: 10 });
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000011" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000011", nationalId: "573000000011" });
     const service = new SettlementService(repo);
 
     await deliverOrder(repo, courier.id, 5000, new Date("2026-01-10T12:00:00Z"));
@@ -66,7 +66,7 @@ describe("SettlementService.recomputeSettlement", () => {
   it("usa la comisión vigente al momento del cálculo, no una futura", async () => {
     const repo = new InMemoryDispatchRepository();
     await repo.updatePlatformConfig({ commissionPercentage: 10 });
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000012" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000012", nationalId: "573000000012" });
     const service = new SettlementService(repo);
 
     await deliverOrder(repo, courier.id, 10_000, new Date("2026-01-10T12:00:00Z"));
@@ -83,7 +83,7 @@ describe("SettlementService.recomputeSettlement", () => {
 describe("SettlementService.canActivate", () => {
   it("permite activarse si no tiene liquidaciones pendientes", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000013" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000013", nationalId: "573000000013" });
     const service = new SettlementService(repo);
 
     const result = await service.canActivate(courier.id, "2026-01-11");
@@ -93,7 +93,7 @@ describe("SettlementService.canActivate", () => {
 
   it("bloquea si tiene comisión pendiente de un día anterior", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000014" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000014", nationalId: "573000000014" });
     const service = new SettlementService(repo);
 
     await deliverOrder(repo, courier.id, 5000, new Date("2026-01-10T12:00:00Z"));
@@ -107,7 +107,7 @@ describe("SettlementService.canActivate", () => {
 
   it("no bloquea por la liquidación del propio día en curso", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000015" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000015", nationalId: "573000000015" });
     const service = new SettlementService(repo);
 
     await deliverOrder(repo, courier.id, 5000, new Date("2026-01-10T08:00:00Z"));
@@ -119,7 +119,7 @@ describe("SettlementService.canActivate", () => {
 
   it("vuelve a permitir activarse una vez que paga la comisión pendiente", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000016" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000016", nationalId: "573000000016" });
     const service = new SettlementService(repo);
 
     await deliverOrder(repo, courier.id, 5000, new Date("2026-01-10T12:00:00Z"));
@@ -132,8 +132,8 @@ describe("SettlementService.canActivate", () => {
 
   it("un domiciliario no bloquea a otro", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courierA = await repo.createCourier({ name: "Ana", phone: "+573000000017" });
-    const courierB = await repo.createCourier({ name: "Beto", phone: "+573000000018" });
+    const courierA = await repo.createCourier({ name: "Ana", phone: "+573000000017", nationalId: "573000000017" });
+    const courierB = await repo.createCourier({ name: "Beto", phone: "+573000000018", nationalId: "573000000018" });
     const service = new SettlementService(repo);
 
     await deliverOrder(repo, courierA.id, 5000, new Date("2026-01-10T12:00:00Z"));
@@ -155,7 +155,7 @@ describe("SettlementService.markPaid", () => {
 describe("SettlementService concurrencia", () => {
   it("dos recomputos concurrentes para el mismo día no duplican el conteo de servicios", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000019" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000019", nationalId: "573000000019" });
     const service = new SettlementService(repo);
 
     await deliverOrder(repo, courier.id, 5000, new Date("2026-01-10T12:00:00Z"));

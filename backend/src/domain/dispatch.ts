@@ -5,6 +5,8 @@ import { CourierWithDistance, CreateOrderInput, Order, OrderStatus } from "./typ
 
 export const DEFAULT_SEARCH_RADIUS_METERS = 5_000;
 export const DEFAULT_MAX_CANDIDATES = 5;
+/** Ventana que tiene cada domiciliario candidato para aceptar antes de pasar al siguiente más cercano. */
+export const DEFAULT_OFFER_TIMEOUT_MS = 60_000;
 
 /**
  * Notifica eventos de despacho hacia el mundo exterior (sockets, WhatsApp,
@@ -12,17 +14,30 @@ export const DEFAULT_MAX_CANDIDATES = 5;
  * la capa de tiempo real y se pueda probar en aislamiento.
  */
 export interface DispatchNotifier {
+  /**
+   * En el modelo de cascada, `candidates` siempre trae un solo elemento: el
+   * candidato al que le toca el turno ahora mismo. Se mantiene como arreglo
+   * (en vez de un solo `CourierWithDistance`) porque "a quién se le está
+   * ofreciendo este pedido" sigue siendo conceptualmente una lista, aunque
+   * hoy solo el primero de la fila tenga la oferta viva.
+   */
   onOrderOffered(order: Order, candidates: CourierWithDistance[]): void;
+  /** El candidato actual no respondió a tiempo: se le retira la oferta antes de ofrecérsela al siguiente. */
+  onOfferExpired(order: Order, courierId: string): void;
   onOrderAssigned(order: Order, winnerCourierId: string): void;
   onOrderStatusChanged(order: Order): void;
   onNoCouriersAvailable(order: Order): void;
+  /** Se agotó la cascada completa sin que nadie aceptara: requiere asignación manual del admin. */
+  onOrderUnassigned(order: Order): void;
 }
 
 export const noopNotifier: DispatchNotifier = {
   onOrderOffered() {},
+  onOfferExpired() {},
   onOrderAssigned() {},
   onOrderStatusChanged() {},
   onNoCouriersAvailable() {},
+  onOrderUnassigned() {},
 };
 
 /** Reenvía cada evento a todos los notificadores dados (ej. Socket.io + WhatsApp a la vez). */
@@ -30,6 +45,9 @@ export function combineNotifiers(...notifiers: DispatchNotifier[]): DispatchNoti
   return {
     onOrderOffered(order, candidates) {
       for (const n of notifiers) n.onOrderOffered(order, candidates);
+    },
+    onOfferExpired(order, courierId) {
+      for (const n of notifiers) n.onOfferExpired(order, courierId);
     },
     onOrderAssigned(order, winnerCourierId) {
       for (const n of notifiers) n.onOrderAssigned(order, winnerCourierId);
@@ -39,6 +57,9 @@ export function combineNotifiers(...notifiers: DispatchNotifier[]): DispatchNoti
     },
     onNoCouriersAvailable(order) {
       for (const n of notifiers) n.onNoCouriersAvailable(order);
+    },
+    onOrderUnassigned(order) {
+      for (const n of notifiers) n.onOrderUnassigned(order);
     },
   };
 }
@@ -64,21 +85,51 @@ export class InvalidOrderStateError extends Error {
   }
 }
 
+export interface DispatchServiceOptions {
+  notifier?: DispatchNotifier;
+  searchRadiusMeters?: number;
+  maxCandidates?: number;
+  /** Opcional: si no se da, `markDelivered` simplemente no recalcula ninguna liquidación. */
+  settlements?: SettlementService;
+  offerTimeoutMs?: number;
+}
+
+/** Estado en memoria de la cascada de un pedido en curso (ver §4 de docs/ARCHITECTURE.md). */
+interface CascadeState {
+  candidates: CourierWithDistance[];
+  currentIndex: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class DispatchService {
-  constructor(
-    private readonly repo: DispatchRepository,
-    private readonly notifier: DispatchNotifier = noopNotifier,
-    private readonly searchRadiusMeters: number = DEFAULT_SEARCH_RADIUS_METERS,
-    private readonly maxCandidates: number = DEFAULT_MAX_CANDIDATES,
-    /** Opcional para no romper tests/usos que no necesitan comisión (ver markDelivered). */
-    private readonly settlements?: SettlementService
-  ) {}
+  private readonly notifier: DispatchNotifier;
+  private readonly searchRadiusMeters: number;
+  private readonly maxCandidates: number;
+  private readonly settlements?: SettlementService;
+  private readonly offerTimeoutMs: number;
 
   /**
-   * Crea una solicitud de domicilio y busca los domiciliarios activos más
-   * cercanos al punto de recogida para ofrecérselo de inmediato. Es el
-   * camino del formulario web directo, donde no hay una tarifa que
-   * confirmar antes: el negocio ya sabe lo que está pidiendo.
+   * Cascadas de asignación activas, en memoria, por `orderId`. Se pierden
+   * si el proceso se reinicia — ver docs/ARCHITECTURE.md §4 para qué
+   * implica eso y cómo se degrada (nunca deja un pedido atascado para
+   * siempre: en el peor caso, el próximo `acceptOrder` que llegue para ese
+   * pedido lo resuelve por la vía atómica normal, sin cascada).
+   */
+  private readonly cascades = new Map<string, CascadeState>();
+
+  constructor(private readonly repo: DispatchRepository, options: DispatchServiceOptions = {}) {
+    this.notifier = options.notifier ?? noopNotifier;
+    this.searchRadiusMeters = options.searchRadiusMeters ?? DEFAULT_SEARCH_RADIUS_METERS;
+    this.maxCandidates = options.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
+    this.settlements = options.settlements;
+    this.offerTimeoutMs = options.offerTimeoutMs ?? DEFAULT_OFFER_TIMEOUT_MS;
+  }
+
+  /**
+   * Crea una solicitud de domicilio y arranca la cascada de asignación
+   * (ver `startCascade`) para el punto de recogida. Es el camino del
+   * formulario web directo, donde no hay una tarifa que confirmar antes:
+   * el negocio ya sabe lo que está pidiendo.
    *
    * El flujo de WhatsApp usa en cambio `createQuote` + `confirmQuote` (ver
    * más abajo), porque ahí primero hay que cotizar y esperar que el
@@ -105,9 +156,8 @@ export class DispatchService {
   }
 
   /**
-   * El solicitante aceptó la tarifa cotizada: se sale a buscar
-   * domiciliarios activos cerca del punto de recogida, igual que en
-   * `createDeliveryRequest`.
+   * El solicitante aceptó la tarifa cotizada: se arranca la cascada de
+   * asignación, igual que en `createDeliveryRequest`.
    */
   async confirmQuote(orderId: string): Promise<{ order: Order; candidates: CourierWithDistance[] }> {
     const order = await this.repo.getOrder(orderId);
@@ -127,14 +177,24 @@ export class DispatchService {
   }
 
   /**
-   * Un domiciliario intenta aceptar un pedido ofrecido. Solo uno puede
-   * ganar: la operación de asignación en el repositorio es atómica
-   * (compare-and-swap contra el estado SEARCHING), así que si dos
-   * domiciliarios llaman a este método "al mismo tiempo" para el mismo
-   * pedido, como mucho uno recibe el pedido asignado y el resto recibe
-   * `OrderAlreadyTakenError`.
+   * Un domiciliario intenta aceptar un pedido ofrecido. En el modelo de
+   * cascada, solo el candidato al que le toca el turno ahora mismo puede
+   * intentarlo (si hay una cascada viva para este pedido en memoria); si
+   * el proceso se reinició y esa cascada se perdió, se degrada al
+   * comportamiento atómico simple ("el primero que acepta gana" contra
+   * quien sea, ver `DispatchRepository.tryAssignOrder`).
+   *
+   * De cualquier forma, la asignación en sí siempre pasa por
+   * `tryAssignOrder`, que es la operación atómica (compare-and-swap contra
+   * SEARCHING) — el chequeo de "es tu turno" es una capa extra de
+   * corrección, no un reemplazo de esa garantía.
    */
   async acceptOrder(orderId: string, courierId: string): Promise<Order> {
+    const cascade = this.cascades.get(orderId);
+    if (cascade && cascade.candidates[cascade.currentIndex].id !== courierId) {
+      throw new OrderAlreadyTakenError(orderId);
+    }
+
     const assigned = await this.repo.tryAssignOrder(orderId, courierId);
 
     if (!assigned) {
@@ -143,6 +203,7 @@ export class DispatchService {
       throw new OrderAlreadyTakenError(orderId);
     }
 
+    this.clearCascade(orderId);
     this.notifier.onOrderAssigned(assigned, courierId);
     return assigned;
   }
@@ -167,24 +228,47 @@ export class DispatchService {
   }
 
   async cancelOrder(orderId: string): Promise<Order> {
+    this.clearCascade(orderId);
     return this.transitionStatus(orderId, "CANCELLED", { cancelledAt: new Date() });
   }
 
   /**
    * Fallback operativo desde el tablero de administración: el camino
-   * principal de asignación es 100% automático, pero si el domiciliario
-   * asignado no puede cumplir, un admin puede forzar una nueva búsqueda
-   * (excluyendo al domiciliario anterior) en vez de esperar a que el
-   * negocio cancele y vuelva a pedir.
+   * principal de asignación sigue siendo automático, pero si el
+   * domiciliario asignado no puede cumplir, un admin puede forzar una
+   * nueva cascada (excluyendo al domiciliario anterior) en vez de esperar
+   * a que el negocio cancele y vuelva a pedir.
    */
   async reassignOrder(orderId: string): Promise<{ order: Order; candidates: CourierWithDistance[] }> {
     const previous = await this.repo.getOrder(orderId);
     if (!previous) throw new OrderNotFoundError(orderId);
 
+    this.clearCascade(orderId);
     const unassigned = await this.repo.unassignOrder(orderId);
     if (!unassigned) throw new OrderNotFoundError(orderId);
 
     return this.searchAndOffer(unassigned, previous.courierId ? [previous.courierId] : []);
+  }
+
+  /**
+   * Última instancia cuando la cascada se agotó sin que nadie aceptara
+   * (`status = UNASSIGNED`): el admin elige directamente al domiciliario.
+   * Es el único lugar de todo el sistema donde un humano asigna a mano —
+   * en cualquier otro estado del pedido esto se rechaza (no le quita el
+   * pedido a un domiciliario que ya está en curso).
+   */
+  async manuallyAssignOrder(orderId: string, courierId: string): Promise<Order> {
+    this.clearCascade(orderId);
+    const assigned = await this.repo.forceAssignOrder(orderId, courierId);
+
+    if (!assigned) {
+      const existing = await this.repo.getOrder(orderId);
+      if (!existing) throw new OrderNotFoundError(orderId);
+      throw new OrderAlreadyTakenError(orderId);
+    }
+
+    this.notifier.onOrderAssigned(assigned, courierId);
+    return assigned;
   }
 
   private async searchAndOffer(
@@ -207,8 +291,68 @@ export class DispatchService {
 
     const searching = await this.repo.updateOrderStatus(order.id, "SEARCHING");
     const finalOrder = searching ?? order;
-    this.notifier.onOrderOffered(finalOrder, candidates);
+    this.startCascade(finalOrder, candidates);
     return { order: finalOrder, candidates };
+  }
+
+  /**
+   * Ofrece el pedido solo al candidato más cercano, con una ventana de
+   * `offerTimeoutMs` (60s por defecto) para aceptar. Si no responde a
+   * tiempo, `advanceCascade` le retira la oferta y pasa al siguiente más
+   * cercano; si se agota la lista completa, el pedido queda `UNASSIGNED`
+   * para asignación manual (ver `manuallyAssignOrder`).
+   */
+  private startCascade(order: Order, candidates: CourierWithDistance[]): void {
+    this.clearCascade(order.id);
+    this.cascades.set(order.id, {
+      candidates,
+      currentIndex: 0,
+      timer: this.scheduleAdvance(order.id),
+    });
+    this.notifier.onOrderOffered(order, [candidates[0]]);
+  }
+
+  private scheduleAdvance(orderId: string): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      this.advanceCascade(orderId).catch((err) =>
+        console.error(`[dispatch] error avanzando la cascada de asignación del pedido ${orderId}`, err)
+      );
+    }, this.offerTimeoutMs);
+  }
+
+  private async advanceCascade(orderId: string): Promise<void> {
+    const cascade = this.cascades.get(orderId);
+    if (!cascade) return; // ya se resolvió (aceptado/cancelado/reasignado) mientras esperábamos.
+
+    const order = await this.repo.getOrder(orderId);
+    if (!order || order.status !== "SEARCHING" || order.courierId !== null) {
+      // Algo más ya lo resolvió (aceptado por fuera de la cascada tras un
+      // reinicio, cancelado, etc.): no hay nada que avanzar.
+      this.cascades.delete(orderId);
+      return;
+    }
+
+    const expiredCandidate = cascade.candidates[cascade.currentIndex];
+    this.notifier.onOfferExpired(order, expiredCandidate.id);
+
+    const nextIndex = cascade.currentIndex + 1;
+    if (nextIndex >= cascade.candidates.length) {
+      this.cascades.delete(orderId);
+      const updated = await this.repo.updateOrderStatus(orderId, "UNASSIGNED");
+      if (updated) this.notifier.onOrderUnassigned(updated);
+      return;
+    }
+
+    cascade.currentIndex = nextIndex;
+    cascade.timer = this.scheduleAdvance(orderId);
+    this.notifier.onOrderOffered(order, [cascade.candidates[nextIndex]]);
+  }
+
+  private clearCascade(orderId: string): void {
+    const cascade = this.cascades.get(orderId);
+    if (!cascade) return;
+    clearTimeout(cascade.timer);
+    this.cascades.delete(orderId);
   }
 
   private async transitionStatus(

@@ -18,6 +18,9 @@ function makeRecordingNotifier() {
     onOrderOffered(order, candidates) {
       events.push({ type: "offered", payload: { order, candidates } });
     },
+    onOfferExpired(order, courierId) {
+      events.push({ type: "offer-expired", payload: { order, courierId } });
+    },
     onOrderAssigned(order, winnerCourierId) {
       events.push({ type: "assigned", payload: { order, winnerCourierId } });
     },
@@ -26,6 +29,9 @@ function makeRecordingNotifier() {
     },
     onNoCouriersAvailable(order) {
       events.push({ type: "no-couriers", payload: order });
+    },
+    onOrderUnassigned(order) {
+      events.push({ type: "unassigned", payload: order });
     },
   };
   return { notifier, events };
@@ -50,7 +56,7 @@ describe("búsqueda de domiciliarios cercanos", () => {
     const medio = repo.seedCourier({ isActive: true, lat: 4.66, lng: -74.09 }); // ~1km
 
     const { notifier, events } = makeRecordingNotifier();
-    const service = new DispatchService(repo, notifier, 5_000, 5);
+    const service = new DispatchService(repo, { notifier, searchRadiusMeters: 5_000, maxCandidates: 5 });
 
     const { order, candidates } = await service.createDeliveryRequest(baseOrderInput());
 
@@ -69,7 +75,7 @@ describe("búsqueda de domiciliarios cercanos", () => {
     repo.seedCourier({ isActive: false, lat: 4.654, lng: -74.084 });
 
     const { notifier, events } = makeRecordingNotifier();
-    const service = new DispatchService(repo, notifier);
+    const service = new DispatchService(repo, { notifier });
 
     const { order, candidates } = await service.createDeliveryRequest(baseOrderInput());
 
@@ -186,7 +192,7 @@ describe("ciclo de vida del pedido", () => {
     await repo.updatePlatformConfig({ commissionPercentage: 10 });
     const courier = repo.seedCourier({ isActive: true, lat: 4.654, lng: -74.084 });
     const settlements = new SettlementService(repo);
-    const service = new DispatchService(repo, undefined, undefined, undefined, settlements);
+    const service = new DispatchService(repo, { settlements });
 
     const { order } = await service.createDeliveryRequest({ ...baseOrderInput(), fare: 5000 });
     await service.acceptOrder(order.id, courier.id);

@@ -1,5 +1,4 @@
 import { Pool } from "pg";
-import { generateActivationCode } from "../domain/activation-code";
 import { DispatchRepository } from "../domain/repository";
 import {
   Business,
@@ -52,7 +51,7 @@ type CourierRow = {
   phone: string;
   vehicle_plate: string | null;
   is_active: boolean;
-  activation_code: string;
+  national_id: string;
   lat: number | null;
   lng: number | null;
   last_seen_at: Date | null;
@@ -168,7 +167,7 @@ function mapCourier(row: CourierRow): Courier {
     phone: row.phone,
     vehiclePlate: row.vehicle_plate,
     isActive: row.is_active,
-    activationCode: row.activation_code,
+    nationalId: row.national_id,
     lat: row.lat,
     lng: row.lng,
     lastSeenAt: row.last_seen_at,
@@ -213,9 +212,9 @@ export class PostgresDispatchRepository implements DispatchRepository {
 
   async createCourier(input: CreateCourierInput): Promise<Courier> {
     const { rows } = await this.pool.query<CourierRow>(
-      `INSERT INTO couriers (name, phone, vehicle_plate, is_active, activation_code)
+      `INSERT INTO couriers (name, phone, vehicle_plate, is_active, national_id)
        VALUES ($1, $2, $3, false, $4) RETURNING *`,
-      [input.name, input.phone, input.vehiclePlate ?? null, generateActivationCode()]
+      [input.name, input.phone, input.vehiclePlate ?? null, input.nationalId]
     );
     return mapCourier(rows[0]);
   }
@@ -298,6 +297,17 @@ export class PostgresDispatchRepository implements DispatchRepository {
       `UPDATE orders
        SET status = 'ASSIGNED', courier_id = $2, assigned_at = now()
        WHERE id = $1 AND status = 'SEARCHING' AND courier_id IS NULL
+       RETURNING *`,
+      [orderId, courierId]
+    );
+    return rows[0] ? mapOrder(rows[0]) : null;
+  }
+
+  async forceAssignOrder(orderId: string, courierId: string): Promise<Order | null> {
+    const { rows } = await this.pool.query<OrderRow>(
+      `UPDATE orders
+       SET status = 'ASSIGNED', courier_id = $2, assigned_at = now()
+       WHERE id = $1 AND status = 'UNASSIGNED' AND courier_id IS NULL
        RETURNING *`,
       [orderId, courierId]
     );

@@ -2,30 +2,30 @@ import { describe, expect, it } from "vitest";
 import {
   CourierActivationService,
   CourierNotFoundError,
-  InvalidActivationCodeError,
+  InvalidActivationCredentialError,
 } from "../src/domain/courier-activation";
 import { PendingSettlementError, SettlementService } from "../src/domain/settlement";
 import { InMemoryDispatchRepository } from "../src/testing/in-memory-repository";
 
-describe("activación de domiciliarios con código", () => {
-  it("activa al domiciliario si el código coincide", async () => {
+describe("activación de domiciliarios con cédula", () => {
+  it("activa al domiciliario si la cédula coincide", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000003" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000003", nationalId: "573000000003" });
     expect(courier.isActive).toBe(false);
 
     const service = new CourierActivationService(repo);
-    const activated = await service.activate(courier.id, courier.activationCode);
+    const activated = await service.activate(courier.id, courier.nationalId);
 
     expect(activated.isActive).toBe(true);
   });
 
-  it("rechaza un código incorrecto sin activar al domiciliario", async () => {
+  it("rechaza una cédula incorrecta sin activar al domiciliario", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000003" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000003", nationalId: "573000000003" });
     const service = new CourierActivationService(repo);
 
     await expect(service.activate(courier.id, "000000")).rejects.toBeInstanceOf(
-      InvalidActivationCodeError
+      InvalidActivationCredentialError
     );
 
     const stillInactive = await repo.getCourier(courier.id);
@@ -38,12 +38,12 @@ describe("activación de domiciliarios con código", () => {
     await expect(service.activate("no-existe", "123456")).rejects.toBeInstanceOf(CourierNotFoundError);
   });
 
-  it("permite desactivarse sin necesitar el código", async () => {
+  it("permite desactivarse sin necesitar la cédula", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000003" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000003", nationalId: "573000000003" });
     const service = new CourierActivationService(repo);
 
-    await service.activate(courier.id, courier.activationCode);
+    await service.activate(courier.id, courier.nationalId);
     const deactivated = await service.deactivate(courier.id);
 
     expect(deactivated.isActive).toBe(false);
@@ -51,7 +51,7 @@ describe("activación de domiciliarios con código", () => {
 
   it("bloquea la activación si el domiciliario tiene comisión pendiente de un día anterior", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000020" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000020", nationalId: "573000000020" });
     const settlements = new SettlementService(repo);
 
     // Simula un día de trabajo anterior sin liquidar.
@@ -72,7 +72,7 @@ describe("activación de domiciliarios con código", () => {
 
     const service = new CourierActivationService(repo, settlements, () => new Date("2026-01-11T09:00:00Z"));
 
-    await expect(service.activate(courier.id, courier.activationCode)).rejects.toBeInstanceOf(
+    await expect(service.activate(courier.id, courier.nationalId)).rejects.toBeInstanceOf(
       PendingSettlementError
     );
     const stillInactive = await repo.getCourier(courier.id);
@@ -81,7 +81,7 @@ describe("activación de domiciliarios con código", () => {
 
   it("permite activarse de nuevo una vez que paga la comisión pendiente", async () => {
     const repo = new InMemoryDispatchRepository();
-    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000022" });
+    const courier = await repo.createCourier({ name: "Ana", phone: "+573000000022", nationalId: "573000000022" });
     const settlements = new SettlementService(repo);
 
     const business = await repo.createBusiness({ name: "Negocio", phone: "+573000000023" });
@@ -101,7 +101,7 @@ describe("activación de domiciliarios con código", () => {
     await settlements.markPaid(courier.id, "2026-01-10");
 
     const service = new CourierActivationService(repo, settlements, () => new Date("2026-01-11T09:00:00Z"));
-    const activated = await service.activate(courier.id, courier.activationCode);
+    const activated = await service.activate(courier.id, courier.nationalId);
     expect(activated.isActive).toBe(true);
   });
 });

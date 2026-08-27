@@ -4,6 +4,7 @@ const ADMIN_KEY_STORAGE = "whatdomi.adminKey";
 
 const FILTERS = [
   { label: "Activos", statuses: ["CREATED", "QUOTED", "SEARCHING", "ASSIGNED", "IN_PROGRESS"] },
+  { label: "Sin asignar (necesitan acción)", statuses: ["UNASSIGNED"] },
   { label: "Entregados", statuses: ["DELIVERED"] },
   { label: "Cancelados / sin domiciliario", statuses: ["CANCELLED", "NO_COURIERS_AVAILABLE"] },
   { label: "Todos", statuses: [] },
@@ -18,6 +19,7 @@ const STATUS_LABELS = {
   DELIVERED: "Entregado",
   CANCELLED: "Cancelado",
   NO_COURIERS_AVAILABLE: "Sin domiciliarios",
+  UNASSIGNED: "Sin asignar (nadie aceptó a tiempo)",
 };
 
 const STATS_RANGES = [
@@ -251,6 +253,7 @@ function renderOrders(orders) {
   const rows = orders
     .map((order) => {
       const canReassignOrCancel = !["DELIVERED", "CANCELLED", "NO_COURIERS_AVAILABLE"].includes(order.status);
+      const isUnassigned = order.status === "UNASSIGNED";
       return `
         <tr data-order-id="${order.id}">
           <td>${new Date(order.createdAt).toLocaleString()}</td>
@@ -264,7 +267,8 @@ function renderOrders(orders) {
             ${
               canReassignOrCancel
                 ? `<div class="row-actions">
-                    <button data-action="reassign">Reasignar</button>
+                    ${isUnassigned ? '<button data-action="assign">Asignar</button>' : ""}
+                    <button data-action="reassign">${isUnassigned ? "Reintentar automático" : "Reasignar"}</button>
                     <button data-action="cancel" class="danger">Cancelar</button>
                   </div>`
                 : ""
@@ -292,7 +296,17 @@ function renderOrders(orders) {
       const action = btn.dataset.action;
       btn.disabled = true;
       try {
-        if (action === "reassign") {
+        if (action === "assign") {
+          const courierId = prompt("ID del domiciliario a asignar manualmente:");
+          if (!courierId) {
+            btn.disabled = false;
+            return;
+          }
+          await apiFetch(`/api/orders/${orderId}/assign`, {
+            method: "POST",
+            body: JSON.stringify({ courierId: courierId.trim() }),
+          });
+        } else if (action === "reassign") {
           await apiFetch(`/api/orders/${orderId}/reassign`, { method: "POST" });
         } else if (action === "cancel") {
           if (!confirm("¿Cancelar este pedido?")) {

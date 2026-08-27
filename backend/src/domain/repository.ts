@@ -69,6 +69,15 @@ export interface DispatchRepository {
   tryAssignOrder(orderId: string, courierId: string): Promise<Order | null>;
 
   /**
+   * Asignación manual del admin, único caso de todo el sistema donde un
+   * humano asigna a mano: solo tiene efecto sobre un pedido `UNASSIGNED`
+   * (la cascada automática se agotó sin que nadie aceptara) y sin
+   * domiciliario ya puesto. No es la vía de "primero en aceptar gana": es
+   * el fallback de última instancia, ver `DispatchService.manuallyAssignOrder`.
+   */
+  forceAssignOrder(orderId: string, courierId: string): Promise<Order | null>;
+
+  /**
    * Fallback operativo para el tablero de administración: libera la
    * asignación actual (si la hay) y vuelve a poner el pedido en
    * `SEARCHING`, para que `DispatchService` reintente la búsqueda. No es

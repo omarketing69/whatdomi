@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { CourierActivationService, CourierNotFoundError, InvalidActivationCodeError } from "../../domain/courier-activation";
+import { CourierActivationService, CourierNotFoundError, InvalidActivationCredentialError } from "../../domain/courier-activation";
 import { DispatchRepository } from "../../domain/repository";
 import { PendingSettlementError } from "../../domain/settlement";
 import { asyncHandler } from "../async-handler";
@@ -11,13 +11,13 @@ const locationSchema = z.object({
 });
 
 const activateSchema = z.object({
-  activationCode: z.string().min(1),
+  nationalId: z.string().min(1),
 });
 
 /**
- * Endpoints que consume la PWA del domiciliario: activarse con el código
- * que se le entregó al registrarse (empieza a reportar ubicación y a
- * recibir ofertas), desactivarse, y reportar ubicación en vivo.
+ * Endpoints que consume la PWA del domiciliario: activarse con su número
+ * de cédula (empieza a reportar ubicación y a recibir ofertas),
+ * desactivarse, y reportar ubicación en vivo.
  */
 export function createCouriersRouter(repo: DispatchRepository): Router {
   const router = Router();
@@ -51,11 +51,11 @@ export function createCouriersRouter(repo: DispatchRepository): Router {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
       try {
-        const courier = await activation.activate(req.params.courierId, parsed.data.activationCode);
+        const courier = await activation.activate(req.params.courierId, parsed.data.nationalId);
         return res.json({ courier });
       } catch (err) {
         if (err instanceof CourierNotFoundError) return res.status(404).json({ error: err.message });
-        if (err instanceof InvalidActivationCodeError) return res.status(403).json({ error: err.message });
+        if (err instanceof InvalidActivationCredentialError) return res.status(403).json({ error: err.message });
         if (err instanceof PendingSettlementError) {
           return res.status(402).json({ error: err.message, pending: err.pending });
         }

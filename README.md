@@ -6,12 +6,16 @@ restaurantes y tiendas online en ciudades pequeñas de Latinoamérica.
 El flujo principal es por **WhatsApp**: el negocio escribe, el bot le pide
 su nombre y las direcciones de recogida/entrega **en texto libre** (sin
 compartir ubicación GPS), el sistema geocodifica esas direcciones, calcula
-una tarifa y se la confirma. Si el solicitante acepta, la plataforma busca
-qué domiciliarios están **activos** y **cerca**, les notifica en tiempo
-real desde su PWA, y asigna el pedido al **primero que lo acepte**. El
-negocio recibe entonces el nombre, la placa y el teléfono del domiciliario
-asignado. También existe un formulario web directo como alternativa a
-WhatsApp, y un tablero de administración de solo monitoreo.
+una tarifa y se la confirma. Si el solicitante acepta, la plataforma le
+ofrece el pedido al domiciliario **activo** más **cercano**, en tiempo
+real desde su PWA; tiene **60 segundos** para aceptar, y si no responde se
+le ofrece automáticamente al siguiente más cercano, y así sucesivamente
+(ver "Cascada de asignación" más abajo). El negocio recibe entonces el
+nombre, la placa y el teléfono del domiciliario asignado. Si nadie acepta
+a tiempo, el pedido queda para que un admin lo asigne a mano, como último
+recurso. También existe un formulario web directo como alternativa a
+WhatsApp, y un panel de administración con configuración de tarifas,
+liquidaciones, y monitoreo.
 
 Para el diseño técnico completo (diagrama, decisiones de stack, cómo se
 resuelve la condición de carrera de la asignación, por qué la
@@ -129,14 +133,14 @@ curl -X POST http://localhost:3000/api/businesses \
   -H "Content-Type: application/json" \
   -d '{"name":"Restaurante La Esquina","phone":"+573000000001"}'
 
-# 2. Registrar un domiciliario (la respuesta trae el activationCode)
+# 2. Registrar un domiciliario (la cédula es su identificador y su credencial de activación)
 curl -X POST http://localhost:3000/api/couriers \
   -H "Content-Type: application/json" \
-  -d '{"name":"Carlos","phone":"+573000000002"}'
+  -d '{"name":"Carlos","phone":"+573000000002","nationalId":"1020304050"}'
 
-# 3. El domiciliario se activa con su código y reporta ubicación
+# 3. El domiciliario se activa con su cédula y reporta ubicación
 curl -X POST http://localhost:3000/api/couriers/<courierId>/activate \
-  -H "Content-Type: application/json" -d '{"activationCode":"<código>"}'
+  -H "Content-Type: application/json" -d '{"nationalId":"1020304050"}'
 curl -X POST http://localhost:3000/api/couriers/<courierId>/location \
   -H "Content-Type: application/json" -d '{"lat":4.6533,"lng":-74.0836}'
 
@@ -149,7 +153,7 @@ curl -X POST http://localhost:3000/api/orders \
     "dropoff":{"lat":4.66,"lng":-74.09}, "dropoffAddress":"Cra 15 #85-20"
   }'
 
-# 5. El domiciliario acepta (el primero que llame a este endpoint gana)
+# 5. El domiciliario acepta (solo funciona si le toca el turno en la cascada)
 curl -X POST http://localhost:3000/api/orders/<orderId>/accept \
   -H "Content-Type: application/json" -d '{"courierId":"<courierId>"}'
 ```
@@ -158,11 +162,15 @@ curl -X POST http://localhost:3000/api/orders/<orderId>/accept \
 
 ```
 CREATED ──▶ SEARCHING ──▶ ASSIGNED ──▶ IN_PROGRESS ──▶ DELIVERED
-   ▲            │
-   │            └─▶ NO_COURIERS_AVAILABLE
+   ▲            │  ▲
+   │            │  └─ cascada: 60s por candidato, pasa al siguiente si no responde
+   │            ├─▶ NO_COURIERS_AVAILABLE (nadie activo cerca, ni para empezar)
+   │            └─▶ UNASSIGNED (se agotó la cascada sin que nadie aceptara)
 QUOTED (solo flujo WhatsApp, esperando confirmación del solicitante)
    │
    └─▶ CANCELLED (desde cualquier estado activo)
+
+UNASSIGNED ──▶ ASSIGNED  (solo vía asignación manual del admin, POST /api/orders/:id/assign)
 ```
 
 `QUOTED` es exclusivo del flujo de WhatsApp: el pedido ya tiene tarifa
@@ -170,23 +178,48 @@ calculada pero todavía no se buscó domiciliario, a la espera de que el
 solicitante responda *SI*. El formulario web directo (`POST /api/orders`)
 se salta ese paso y arranca directo en `SEARCHING`.
 
+## Cascada de asignación (timeout + reintento)
+
+Al pasar a `SEARCHING`, el pedido no se ofrece a todos los candidatos a la
+vez: se le ofrece solo al **más cercano**, con una ventana de
+`OFFER_TIMEOUT_MS` (60s por defecto) para aceptar desde su PWA. Si no
+responde a tiempo:
+
+1. Se le retira la oferta (evento `order:offer-cancelled` a su sala).
+2. Se le ofrece al siguiente más cercano, con otros 60s.
+3. Así hasta que alguien acepte, o se agote la lista de candidatos activos.
+
+Si se agota la lista sin que nadie acepte, el pedido pasa a `UNASSIGNED` y
+aparece en el panel de admin para asignación manual
+(`POST /api/orders/:id/assign` con `{"courierId": "..."}`) — el único
+lugar de todo el sistema donde un humano asigna a mano, y solo como
+fallback de última instancia. El admin también puede pedir un
+`POST /api/orders/:id/reassign` para que se reintente la cascada completa
+en vez de elegir a mano.
+
+Solo el candidato al que le toca el turno puede aceptar en un momento dado
+(`POST /api/orders/:id/accept` rechaza a cualquier otro con `409`), pero la
+asignación en sí sigue resolviéndose con la misma operación atómica de
+base de datos que antes — ver `docs/ARCHITECTURE.md` §4.
+
 ## API (resumen)
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | POST | `/api/businesses` | Registrar un negocio |
-| POST | `/api/couriers` | Registrar un domiciliario (responde con `activationCode`) |
-| POST | `/api/couriers/:id/activate` | Activarse con el código (`402` si tiene comisión pendiente de días anteriores) |
-| POST | `/api/couriers/:id/deactivate` | Desactivarse (sin necesitar el código) |
+| POST | `/api/couriers` | Registrar un domiciliario (nombre, WhatsApp, `nationalId`/cédula, placa) |
+| POST | `/api/couriers/:id/activate` | Activarse con la cédula (`402` si tiene comisión pendiente de días anteriores) |
+| POST | `/api/couriers/:id/deactivate` | Desactivarse (sin necesitar la cédula) |
 | POST | `/api/couriers/:id/location` | Reportar ubicación en vivo |
-| POST | `/api/orders` | Crear una solicitud de domicilio directa (busca y notifica candidatos de inmediato) |
-| GET | `/api/orders` | Listar pedidos, opcional `?status=SEARCHING,ASSIGNED` (tablero de administración) |
+| POST | `/api/orders` | Crear una solicitud de domicilio directa (arranca la cascada de asignación) |
+| GET | `/api/orders` | Listar pedidos, opcional `?status=SEARCHING,ASSIGNED,UNASSIGNED,...` (tablero de administración) |
 | GET | `/api/orders/:id` | Consultar estado de un pedido |
-| POST | `/api/orders/:id/accept` | Un domiciliario acepta el pedido (atómico) |
+| POST | `/api/orders/:id/accept` | El domiciliario al que le toca el turno acepta el pedido (`409` si no es su turno o ya no está disponible) |
 | POST | `/api/orders/:id/picked-up` | Marcar como recogido / en curso |
 | POST | `/api/orders/:id/delivered` | Marcar como entregado |
 | POST | `/api/orders/:id/cancel` | Cancelar el pedido |
-| POST | `/api/orders/:id/reassign` | Fallback manual del admin: libera la asignación y reintenta la búsqueda |
+| POST | `/api/orders/:id/reassign` | Fallback del admin: libera la asignación actual y reintenta la cascada completa desde cero |
+| POST | `/api/orders/:id/assign` | Última instancia del admin: asigna a mano un pedido `UNASSIGNED` con `{"courierId": "..."}` |
 | GET/POST | `/whatsapp/webhook` | Webhook de WhatsApp Business (flujo conversacional completo, ver más abajo) |
 | GET | `/api/admin/config` | Configuración vigente de tarifa/comisión |
 | PUT | `/api/admin/config` | Actualizar tarifa base, costo/km, tarifa mínima, comisión, moneda o recargos |
@@ -195,9 +228,10 @@ se salta ese paso y arranca directo en `SEARCHING`.
 | POST | `/api/admin/settlements/:courierId/:date/pay` | Marcar como pagada la comisión de ese domiciliario ese día |
 | GET | `/api/admin/stats?range=day\|week` | Totales agregados: servicios, ingresos, comisión de la plataforma |
 
-`GET /api/orders`, `POST /api/orders/:id/reassign` y todo `/api/admin/*`
-están protegidos por la clave de administrador (`ADMIN_API_KEY`, cabecera
-`X-Admin-Key`) — ver "Los 3 roles" arriba y `docs/ARCHITECTURE.md` §2.
+`GET /api/orders`, `POST /api/orders/:id/reassign`, `POST /api/orders/:id/assign`
+y todo `/api/admin/*` están protegidos por la clave de administrador
+(`ADMIN_API_KEY`, cabecera `X-Admin-Key`) — ver "Los 3 roles" arriba y
+`docs/ARCHITECTURE.md` §2.
 
 Eventos de Socket.io emitidos por el backend: `order:offer` (a cada
 domiciliario candidato), `order:won` (al ganador), `order:status` (a quien
@@ -215,8 +249,8 @@ siga la sala `order:<id>`), `order:offer-cancelled`.
    por km + piso mínimo, configurables en vivo por el admin desde
    `/api/admin/config`), y se le muestra al solicitante para que responda
    *SI* o *NO*.
-5. Si confirma: se crea el pedido y arranca la búsqueda automática de
-   domiciliarios, igual que el flujo directo.
+5. Si confirma: se crea el pedido y arranca la cascada de asignación
+   (ver más abajo), igual que el flujo directo.
 6. Al asignarse: el **domiciliario** recibe los datos del servicio
    (recogida, entrega, tarifa) y el **negocio** recibe nombre, placa y
    teléfono del domiciliario.
@@ -251,9 +285,10 @@ de días ya cerrados. Ver `backend/src/domain/settlement.ts`
   `paymentStatus` en `Order` para conectar una pasarela más adelante sin
   migrar el esquema otra vez.
 - **Verificación de identidad real**: tanto el solicitante (por WhatsApp)
-  como el domiciliario (código de activación simple) se identifican sin un
-  mecanismo de autenticación fuerte — suficiente para el MVP, no para
-  producción a gran escala (ver `docs/ARCHITECTURE.md` §7).
+  como el domiciliario (su cédula, sin verificarla contra ninguna fuente
+  oficial) se identifican sin un mecanismo de autenticación fuerte —
+  suficiente para el MVP, no para producción a gran escala (ver
+  `docs/ARCHITECTURE.md` §7).
 
 ## Variables de entorno
 

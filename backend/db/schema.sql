@@ -20,10 +20,10 @@ CREATE TABLE IF NOT EXISTS couriers (
   phone            TEXT NOT NULL UNIQUE,
   vehicle_plate    TEXT,
   is_active        BOOLEAN NOT NULL DEFAULT false,
-  -- Código que el domiciliario usa para activarse desde la PWA (ver
-  -- CourierActivationService). No es un mecanismo de seguridad fuerte,
-  -- basta para el MVP; ver docs/ARCHITECTURE.md.
-  activation_code  TEXT NOT NULL,
+  -- Número de cédula: identificador único del domiciliario Y su
+  -- credencial de activación (no hay un código generado aparte, ver
+  -- CourierActivationService). Dato sensible (PII) — ver docs/ARCHITECTURE.md §7.
+  national_id      TEXT NOT NULL UNIQUE,
   lat              DOUBLE PRECISION,
   lng              DOUBLE PRECISION,
   -- Columna geográfica derivada de lat/lng (ver trigger más abajo), usada
@@ -45,7 +45,10 @@ CREATE TYPE order_status AS ENUM (
   'IN_PROGRESS',
   'DELIVERED',
   'CANCELLED',
-  'NO_COURIERS_AVAILABLE'
+  'NO_COURIERS_AVAILABLE',
+  -- Se agotó la cascada de candidatos (cada uno con su ventana de 60s)
+  -- sin que nadie aceptara: requiere asignación manual del admin.
+  'UNASSIGNED'
 );
 
 CREATE TABLE IF NOT EXISTS orders (

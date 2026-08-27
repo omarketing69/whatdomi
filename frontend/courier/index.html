@@ -34,7 +34,7 @@
   <body>
     <header>
       <h1>WhatDomi · Domiciliario</h1>
-      <p>Regístrate una vez, guarda tu código de activación, y actívate cuando empieces a trabajar.</p>
+      <p>Regístrate una vez con tu cédula, y actívate con ella cuando empieces a trabajar.</p>
     </header>
 
     <main>
@@ -42,7 +42,8 @@
         <h2>1. Registro</h2>
         <form id="register-form">
           <label>Nombre<input type="text" name="name" required /></label>
-          <label>Teléfono<input type="tel" name="phone" required /></label>
+          <label>Teléfono / WhatsApp<input type="tel" name="phone" required /></label>
+          <label>Número de cédula<input type="text" name="nationalId" required inputmode="numeric" /></label>
           <label>Placa de la moto<input type="text" name="vehiclePlate" /></label>
           <button type="submit">Registrarme</button>
         </form>
@@ -51,10 +52,10 @@
 
       <section id="activation-section" hidden>
         <h2>2. Activarme</h2>
-        <p class="hint">Tu código de activación se te mostró al registrarte; también queda guardado en este navegador/dispositivo.</p>
+        <p class="hint">Usa el mismo número de cédula con el que te registraste; queda guardado en este navegador/dispositivo.</p>
         <form id="activation-form">
           <label>ID de domiciliario<input type="text" name="courierId" required /></label>
-          <label>Código de activación<input type="text" name="activationCode" required inputmode="numeric" /></label>
+          <label>Número de cédula<input type="text" name="nationalId" required inputmode="numeric" /></label>
           <button type="submit">Activarme</button>
         </form>
         <p><span id="status-pill" class="pill offline">Desconectado</span></p>

@@ -55,20 +55,24 @@ Flujo completo de un pedido (WhatsApp, el canal principal):
 4. Si confirma: se crea el pedido, pasa a `SEARCHING`, y el backend busca
    domiciliarios **activos** dentro de un radio configurable, ordenados por
    distancia (PostGIS).
-5. Se notifica a los N más cercanos por WebSocket a sus PWA. El primero que
-   acepta gana el pedido (`ASSIGNED`); el resto deja de verlo disponible.
-   Esto se resuelve con una operación atómica en la base de datos, no con
-   lógica en el servidor de aplicación (ver §4). Es 100% automático — no
-   hay asignación manual en el camino principal.
-6. Al asignarse: el **domiciliario** recibe por WhatsApp los datos del
-   servicio (recogida, entrega, tarifa); el **negocio** recibe nombre,
-   placa y teléfono del domiciliario.
+5. Se le ofrece el pedido por WebSocket, **de a uno a la vez**, empezando
+   por el más cercano: 60 segundos para aceptar desde su PWA, y si no
+   responde se le ofrece automáticamente al siguiente más cercano (ver
+   §4). El primero que acepta gana el pedido (`ASSIGNED`); la asignación
+   en sí se resuelve con una operación atómica en la base de datos, no con
+   lógica en el servidor de aplicación. Es 100% automático — no hay
+   asignación manual en este camino. Si se agota la lista completa sin que
+   nadie acepte, el pedido queda `UNASSIGNED` para que un admin lo asigne
+   a mano como último recurso.
+6. Al asignarse (automática o manualmente): el **domiciliario** recibe por
+   WhatsApp los datos del servicio (recogida, entrega, tarifa); el
+   **negocio** recibe nombre, placa y teléfono del domiciliario.
 7. El domiciliario recoge (`IN_PROGRESS`) y entrega (`DELIVERED`) el
    pedido desde su PWA. Al entregar, se recalcula su liquidación de
    comisión del día (ver §7-8).
 8. En paralelo, el **admin** ve todo esto en vivo desde su panel (polling
-   corto sobre la misma API): pedidos en curso (solo monitoreo, con un
-   botón de reasignar/cancelar como fallback operativo), tarifa/comisión
+   corto sobre la misma API): pedidos en curso (solo monitoreo, con
+   reasignar/asignar/cancelar como fallback operativo), tarifa/comisión
    configurables, y liquidaciones diarias por domiciliario.
 
 El formulario web directo (`frontend/index.html`) es un segundo canal para
@@ -94,9 +98,10 @@ comentario ahí para el detalle):
 - **Business** (negocio): quien solicita domicilios. Nombre, teléfono,
   dirección. Por WhatsApp se crea automáticamente la primera vez que un
   número escribe (no hay registro previo ni verificación de identidad).
-- **Courier** (domiciliario): quien los entrega. Nombre, teléfono, placa,
-  `isActive`, `activationCode` (código con el que se activa desde su
-  PWA), ubicación en vivo (`lat`/`lng`), `lastSeenAt`.
+- **Courier** (domiciliario): quien los entrega. Nombre, teléfono/WhatsApp,
+  placa, `isActive`, `nationalId` (cédula: identificador único y también
+  la credencial con la que se activa desde su PWA, ver §7), ubicación en
+  vivo (`lat`/`lng`), `lastSeenAt`.
 
 Business y Courier se modelan como **entidades separadas**, no como filas
 de una tabla `users` con un campo `role`: sus datos y ciclo de vida no se
@@ -126,8 +131,10 @@ Ciclo de vida de un pedido (`OrderStatus`):
                     │     esperando confirmación del solicitante)
                     │
 CREATED ────────────┼──▶ SEARCHING ──▶ ASSIGNED ──▶ IN_PROGRESS ──▶ DELIVERED
-(web directa)       │        │
-                    │        └─▶ NO_COURIERS_AVAILABLE
+(web directa)       │        │  ▲
+                    │        │  └─ cascada: 60s por candidato (§4)
+                    │        ├─▶ NO_COURIERS_AVAILABLE (nadie activo cerca, ni para empezar)
+                    │        └─▶ UNASSIGNED ──▶ ASSIGNED (solo asignación manual del admin, §8)
                     └──────────────▶ CANCELLED (desde cualquier estado activo)
 ```
 
@@ -151,21 +158,32 @@ búsqueda/notificación de candidatos vía `searchAndOffer`).
 | PWA del domiciliario | Web App Manifest + Service Worker mínimo | El mercado objetivo son ciudades pequeñas con celulares de gama baja: una PWA instalable evita la fricción (y el costo de distribución) de una app nativa. |
 | Tests              | Vitest sobre un repositorio en memoria    | La lógica de asignación, el flujo conversacional y la geocodificación se prueban sin depender de una base de datos ni de red real. |
 
-## 4. Asignación atómica: "el primero que acepta, gana"
+## 4. Cascada de asignación: candidato más cercano, 60s, siguiente
 
-Este es el punto más delicado del negocio: varios domiciliarios pueden
-recibir la oferta del mismo pedido al mismo tiempo, y solo uno debe quedarse
-con él. Es 100% automático: el tablero de administración solo observa,
-salvo por un botón de "reasignar" que es un fallback operativo explícito
-(§8), no un camino de asignación manual alternativo.
+Este es el punto más delicado del negocio. La regla de producto es:
+ofrecerle el pedido al domiciliario activo más cercano, darle 60 segundos
+para aceptar, y si no responde, ofrecérselo automáticamente al siguiente
+más cercano — así hasta que alguien acepte o se agote la lista. Es 100%
+automático: el tablero de administración solo observa, salvo por
+"reasignar" (reintenta la cascada completa) y "asignar" sobre un pedido
+`UNASSIGNED` (§7), ninguno de los dos es el camino principal.
 
-**Antipatrón evitado**: leer el estado del pedido, comprobar en la
-aplicación si sigue disponible, y luego escribir la asignación. Esto tiene
-una condición de carrera clásica (TOCTOU): dos requests pueden leer
-"disponible" antes de que cualquiera de las dos escriba.
+`DispatchService` mantiene, en memoria, un mapa `orderId → estado de la
+cascada` (`candidates`, `currentIndex`, el `setTimeout` vigente):
 
-**Solución**: una única sentencia SQL condicional, `UPDATE ... WHERE status
-= 'SEARCHING' AND courier_id IS NULL`, ejecutada directamente por Postgres:
+1. Al pasar a `SEARCHING`, se le notifica (Socket.io) solo al candidato
+   en `candidates[0]` y se arma un timer de `OFFER_TIMEOUT_MS` (60s).
+2. Si el timer se cumple sin que nadie haya aceptado, se le retira la
+   oferta a ese candidato (`onOfferExpired`, evento
+   `order:offer-cancelled` a su sala), se avanza `currentIndex`, y se le
+   ofrece al siguiente con un timer nuevo.
+3. Si se acaba la lista, el pedido pasa a `UNASSIGNED` y se dispara
+   `onOrderUnassigned` (aviso al negocio, aparece en el panel de admin).
+4. Si alguien acepta, se limpia el timer y la entrada del mapa.
+
+**La asignación en sí sigue siendo la operación atómica de siempre** — la
+cascada solo decide *a quién ofrecérsela en cada momento*, no reemplaza la
+garantía de fondo:
 
 ```sql
 UPDATE orders
@@ -182,11 +200,26 @@ ninguna fila. La aplicación simplemente revisa si `RETURNING` trajo una fila
 o no — sin locks explícitos, sin transacciones manuales, sin necesidad de
 `SELECT ... FOR UPDATE`.
 
-Esta misma lógica se implementó en el repositorio en memoria usado en tests
-(`InMemoryDispatchRepository.tryAssignOrder`), cediendo el control del event
-loop antes de escribir, para poder reproducir la carrera de verdad en los
-tests (ver `backend/tests/dispatch.test.ts`, incluye una carrera de 20
-domiciliarios aceptando el mismo pedido).
+Encima de esa garantía, `DispatchService.acceptOrder` agrega una capa: si
+hay una cascada viva para el pedido, solo el candidato al que le toca el
+turno puede intentar aceptar — cualquier otro se rechaza de inmediato
+(`OrderAlreadyTakenError`, sin tocar la base de datos) aunque técnicamente
+el pedido siga en `SEARCHING`. Es una comprobación en memoria, no en la
+base de datos: si el proceso se reinicia y la cascada en memoria se
+pierde, `acceptOrder` se degrada al comportamiento atómico simple (gana
+quien primero llegue), en vez de dejar el pedido inaceptable para
+siempre — ver §11 sobre qué le falta a esto para un despliegue con más de
+una instancia.
+
+Esta misma lógica de asignación atómica se implementó en el repositorio en
+memoria usado en tests (`InMemoryDispatchRepository.tryAssignOrder`),
+cediendo el control del event loop antes de escribir, para poder
+reproducir la carrera de verdad en los tests (ver
+`backend/tests/dispatch.test.ts`, incluye una carrera de 20 domiciliarios
+aceptando el mismo pedido). La cascada en sí — avanzar al siguiente
+candidato tras el timeout, congelarse al aceptar, agotarse en
+`UNASSIGNED` — se prueba con los timers falsos de Vitest en
+`backend/tests/dispatch-cascade.test.ts`, sin esperar 60 segundos reales.
 
 ## 5. Geocodificación de direcciones en texto libre
 
@@ -263,19 +296,25 @@ debe a la plataforma — ver §7.
 
 ## 7. Activación del domiciliario y comisión diaria
 
-El domiciliario se registra una sola vez (`POST /api/couriers`) y recibe
-un `activationCode` de 6 dígitos. Para "prender" su sesión y empezar a
-recibir pedidos, lo usa en su PWA (`POST /api/couriers/:id/activate`); a
+El domiciliario se registra una sola vez (`POST /api/couriers`) con su
+nombre, su número de WhatsApp, su placa, y su **número de cédula**
+(`nationalId`) — no hay un código de activación generado aparte: la
+cédula misma es la credencial. Para "prender" su sesión y empezar a
+recibir pedidos, la usa en su PWA (`POST /api/couriers/:id/activate`); a
 partir de ahí reporta su ubicación en vivo y queda visible para la
 búsqueda de candidatos. Desactivarse (`POST /api/couriers/:id/deactivate`)
-no requiere el código — es una acción sobre la propia sesión.
+no requiere la cédula — es una acción sobre la propia sesión.
 
-Esto **no** es un mecanismo de autenticación fuerte (el código no expira,
-no rota, no está hasheado en la base de datos) — es intencional para el
-MVP: no hay verificación de identidad real en ningún actor del sistema
-todavía (ni domiciliarios ni solicitantes). Antes de operar a escala
-conviene: hashear el código, rotarlo, o reemplazarlo por un login con
-OTP por SMS/WhatsApp.
+Esto **no** es un mecanismo de autenticación fuerte (la cédula no se
+verifica contra ninguna fuente oficial, no está hasheada en la base de
+datos) — es intencional para el MVP: no hay verificación de identidad
+real en ningún actor del sistema todavía (ni domiciliarios ni
+solicitantes). Además, un número de cédula es un dato personal sensible
+(PII): antes de operar a escala conviene, como mínimo, no loguearlo nunca
+en texto plano (hoy no se loguea en ningún punto del código), restringir
+qué respuestas de la API lo devuelven, y evaluar cifrarlo en reposo;
+verificarlo contra una fuente oficial (Registraduría) y/o complementarlo
+con un login por OTP de SMS/WhatsApp queda como mejora de identidad real.
 
 **Activarse también depende de estar al día con la comisión.** Cada vez
 que un domiciliario entrega un pedido (`DispatchService.markDelivered`),
@@ -308,14 +347,19 @@ concurrencia de recalcular la misma liquidación dos veces).
 capacidades, todas detrás de `requireAdminKey`:
 
 1. **Monitoreo de pedidos** (`GET /api/orders` con polling corto,
-   filtrando por estado) — recogida, entrega, tarifa, estado y
-   domiciliario de cada uno. **Es solo para monitoreo**: la asignación
-   sigue siendo 100% automática. La única acción además de cancelar es
-   "Reasignar" (`POST /api/orders/:id/reassign`), un fallback operativo —
-   por ejemplo, si el domiciliario asignado avisa que no puede cumplir.
-   Libera la asignación actual y vuelve a correr la misma búsqueda
-   automática (excluyendo al domiciliario anterior), no asigna a nadie a
-   mano.
+   filtrando por estado, incluido `UNASSIGNED`) — recogida, entrega,
+   tarifa, estado y domiciliario de cada uno. **Es solo para monitoreo**:
+   la asignación sigue siendo 100% automática, con dos acciones de
+   fallback:
+   - **"Reasignar"** (`POST /api/orders/:id/reassign`): libera la
+     asignación actual y reintenta la cascada completa desde cero
+     (excluyendo al domiciliario anterior) — para cuando el domiciliario
+     asignado avisa que no puede cumplir.
+   - **"Asignar"** (`POST /api/orders/:id/assign`, solo disponible sobre
+     un pedido `UNASSIGNED`): el admin elige directamente al
+     domiciliario. Es el único lugar de todo el sistema donde un humano
+     asigna a mano — último recurso cuando la cascada automática se
+     agotó sin que nadie aceptara, nunca el camino principal.
 2. **Configuración de tarifa/comisión** (`GET`/`PUT /api/admin/config`) —
    ver §6.
 3. **Registro de servicios y liquidaciones por día**
@@ -401,15 +445,24 @@ Pendiente de implementar en cuanto haya credenciales:
   operador de la plataforma, no para un equipo), y negocio/domiciliario no
   tienen cuenta en absoluto. Antes de producción a mayor escala: cuentas
   con usuario/contraseña o magic link para admins (con roles si hay más de
-  un operador), API key o JWT por negocio, y un mecanismo de identidad más
-  fuerte para domiciliarios que el código de activación simple.
+  un operador), API key o JWT por negocio, y verificar la cédula del
+  domiciliario contra una fuente oficial en vez de solo tomarla tal cual
+  la escribió.
 - **Rate limiting** en los endpoints públicos y en el webhook de WhatsApp.
-- **Notificación en cascada por cercanía**: hoy se notifica a los N más
-  cercanos a la vez; una mejora natural es notificar primero al más cercano
-  y ampliar el círculo si no acepta en X segundos.
-- **Reintentos/expiración de oferta**: si ningún candidato acepta en un
-  tiempo límite, reintentar la búsqueda con un radio mayor o marcar el
-  pedido para atención manual.
+- **Estado de la cascada de asignación en memoria** (§4): el mapa
+  `orderId → cascada` vive en el proceso de Node, no en la base de datos.
+  Con una sola instancia del backend (el caso del MVP) esto es correcto;
+  con más de una instancia detrás de un balanceador, dos réplicas podrían
+  cada una arrancar su propia cascada para el mismo pedido, o perder el
+  timer si el proceso que la inició se reinicia a mitad de una ventana de
+  60s. Antes de escalar a múltiples instancias conviene mover ese estado a
+  algo compartido (Redis con TTL, o un job programado que revise pedidos
+  `SEARCHING` estancados más de `OFFER_TIMEOUT_MS`) en vez de `setTimeout`
+  en memoria de proceso.
+- **Radio de búsqueda ampliado si se agota la lista**: hoy, si la cascada
+  agota los candidatos dentro de `SEARCH_RADIUS_METERS`, el pedido pasa
+  directo a `UNASSIGNED`; una mejora natural es reintentar una vez con un
+  radio mayor antes de pedir intervención manual.
 - **Observabilidad**: logging estructurado, métricas de tiempo de
   asignación, alertas de zonas sin domiciliarios activos.
 - **Migraciones versionadas**: `db/schema.sql` es suficiente para el MVP;

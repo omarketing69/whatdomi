@@ -12,6 +12,7 @@ const createBusinessSchema = z.object({
 const createCourierSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
+  nationalId: z.string().min(5),
   vehiclePlate: z.string().optional(),
 });
 

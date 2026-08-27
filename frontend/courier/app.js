@@ -54,7 +54,7 @@ const stored = getStored();
 if (stored?.courierId) {
   activationSection.hidden = false;
   activationForm.courierId.value = stored.courierId;
-  if (stored.activationCode) activationForm.activationCode.value = stored.activationCode;
+  if (stored.nationalId) activationForm.nationalId.value = stored.nationalId;
   registerStatus.textContent = `Ya registrado como "${stored.name}" en este dispositivo.`;
   registerStatus.className = "status ok";
 }
@@ -68,14 +68,14 @@ registerForm.addEventListener("submit", async (event) => {
     registerStatus.textContent = "Registrando...";
     registerStatus.className = "status";
     const { courier } = await apiFetch("/api/couriers", { method: "POST", body: JSON.stringify(data) });
-    storeCourier({ courierId: courier.id, activationCode: courier.activationCode, name: courier.name });
+    storeCourier({ courierId: courier.id, nationalId: courier.nationalId, name: courier.name });
 
-    registerStatus.textContent = `¡Registrado! Tu código de activación es ${courier.activationCode} (ya quedó guardado en este dispositivo).`;
+    registerStatus.textContent = `¡Registrado! Usa tu cédula (${courier.nationalId}) para activarte.`;
     registerStatus.className = "status ok";
 
     activationSection.hidden = false;
     activationForm.courierId.value = courier.id;
-    activationForm.activationCode.value = courier.activationCode;
+    activationForm.nationalId.value = courier.nationalId;
   } catch (err) {
     registerStatus.textContent = `No se pudo registrar: ${err.message}`;
     registerStatus.className = "status error";
@@ -84,17 +84,17 @@ registerForm.addEventListener("submit", async (event) => {
 
 activationForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const { courierId, activationCode } = Object.fromEntries(new FormData(activationForm).entries());
+  const { courierId, nationalId } = Object.fromEntries(new FormData(activationForm).entries());
 
   try {
     activationStatus.textContent = "Activando...";
     activationStatus.className = "status";
     await apiFetch(`/api/couriers/${courierId}/activate`, {
       method: "POST",
-      body: JSON.stringify({ activationCode }),
+      body: JSON.stringify({ nationalId }),
     });
 
-    storeCourier({ ...getStored(), courierId, activationCode });
+    storeCourier({ ...getStored(), courierId, nationalId });
     activationStatus.textContent = "¡Activo! Ya estás visible para recibir pedidos cercanos.";
     activationStatus.className = "status ok";
     setPill(true);

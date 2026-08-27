@@ -17,6 +17,7 @@ import { stubWhatsAppSender } from "./whatsapp/sender";
 const PORT = Number(process.env.PORT ?? 3000);
 const SEARCH_RADIUS_METERS = Number(process.env.SEARCH_RADIUS_METERS ?? 5_000);
 const MAX_CANDIDATES = Number(process.env.MAX_CANDIDATES ?? 5);
+const OFFER_TIMEOUT_MS = Number(process.env.OFFER_TIMEOUT_MS ?? 60_000);
 
 const repo = new PostgresDispatchRepository(getPool());
 const settlements = new SettlementService(repo);
@@ -30,7 +31,13 @@ const notifier = combineNotifiers(
   createWhatsAppDispatchNotifier(repo, whatsappSender)
 );
 
-const dispatch = new DispatchService(repo, notifier, SEARCH_RADIUS_METERS, MAX_CANDIDATES, settlements);
+const dispatch = new DispatchService(repo, {
+  notifier,
+  searchRadiusMeters: SEARCH_RADIUS_METERS,
+  maxCandidates: MAX_CANDIDATES,
+  settlements,
+  offerTimeoutMs: OFFER_TIMEOUT_MS,
+});
 
 // Si hay ANTHROPIC_API_KEY, se usa un LLM para interpretar direcciones
 // informales antes de geocodificarlas; si no, se manda el texto tal cual

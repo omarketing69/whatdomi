@@ -47,16 +47,21 @@ export function createSocketNotifier(io: SocketIOServer): DispatchNotifier {
       }
       io.to(orderRoom(order.id)).emit("order:status", order);
     },
+    /** El candidato al que le tocaba el turno no respondió a tiempo: se le retira la oferta de su propia sala. */
+    onOfferExpired(order: Order, courierId: string) {
+      io.to(courierRoom(courierId)).emit("order:offer-cancelled", { orderId: order.id });
+    },
     onOrderAssigned(order: Order, winnerCourierId: string) {
       io.to(orderRoom(order.id)).emit("order:status", order);
       io.to(courierRoom(winnerCourierId)).emit("order:won", order);
-      // Avisa a los demás domiciliarios candidatos que la oferta ya no está disponible.
-      io.emit("order:offer-cancelled", { orderId: order.id });
     },
     onOrderStatusChanged(order: Order) {
       io.to(orderRoom(order.id)).emit("order:status", order);
     },
     onNoCouriersAvailable(order: Order) {
+      io.to(orderRoom(order.id)).emit("order:status", order);
+    },
+    onOrderUnassigned(order: Order) {
       io.to(orderRoom(order.id)).emit("order:status", order);
     },
   };
