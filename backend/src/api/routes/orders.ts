@@ -177,6 +177,35 @@ export function createOrdersRouter(
   );
 
   /**
+   * Seguimiento público para el cliente final del negocio (quien recibe el
+   * pedido), sin necesitar cuenta: solo hace falta el `orderId`, que el
+   * negocio le comparte directamente (ej. por WhatsApp). Es seguro exponerlo
+   * sin autenticación porque `orders.id` es un UUID (`gen_random_uuid()`,
+   * ver `db/schema.sql`) — no enumerable, mismo modelo de confianza que un
+   * link de seguimiento de una transportadora. Deliberadamente NO incluye
+   * nada del negocio (`businessId`), del cliente (`customerName`/
+   * `customerPhone`/`notes`) ni de pagos (`merchandiseValue`/`paymentMode`)
+   * — solo lo que el cliente final necesita para saber dónde va su pedido.
+   */
+  router.get(
+    "/:orderId/track",
+    asyncHandler(async (req, res) => {
+      const order = await dispatch.getOrderOrNull(req.params.orderId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+
+      const courier = order.courierId ? await repo.getCourier(order.courierId) : null;
+
+      return res.json({
+        status: order.status,
+        pickupAddress: order.pickupAddress,
+        dropoffAddress: order.dropoffAddress,
+        createdAt: order.createdAt,
+        courier: courier ? { name: courier.name, vehiclePlate: courier.vehiclePlate ?? null, phone: courier.phone } : null,
+      });
+    })
+  );
+
+  /**
    * `courierId` viene del token de sesión (`req.courierId`), no del body:
    * antes cualquiera podía mandar el id de otro domiciliario y aceptar
    * pedidos "a su nombre" sin ser esa persona.

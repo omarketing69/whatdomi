@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Domi911 - Ingresa a tu negocio</title>
+    <title>Domi911 - Domiciliarios para tu negocio</title>
     <link rel="icon" href="assets/favicon.ico" />
     <link rel="stylesheet" href="styles.css" />
     <style>
@@ -21,14 +21,399 @@
         background: var(--primary);
         color: white;
       }
+
+      /* --- Landing page: nav, hero extra, secciones y footer ---
+         Todo esto vive acá (no en styles.css) porque las reglas base de
+         `header`/`main`/`section` en styles.css las comparten dashboard.html,
+         admin.html y courier/index.html — no se pueden reescribir sin
+         afectarlas. Las clases nuevas (`.landing-*`) cancelan lo que haga
+         falta explícitamente en vez de depender de la cascada. */
+      .landing-nav {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        padding: 0.75rem 1.5rem;
+        background: var(--card);
+        border-bottom: 1px solid var(--border);
+      }
+      .landing-nav-links {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        flex-wrap: wrap;
+      }
+      .landing-nav-links a {
+        color: var(--text);
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
+      .landing-nav-links a:hover {
+        color: var(--primary-dark);
+      }
+      .landing-nav-actions {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+      .landing-nav-actions a.landing-link {
+        color: var(--text);
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .landing-cta,
+      .landing-cta-outline {
+        display: inline-block;
+        text-decoration: none;
+        border-radius: 8px;
+        padding: 0.6rem 1.1rem;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .landing-cta {
+        background: var(--primary);
+        color: white;
+      }
+      .landing-cta:hover {
+        background: var(--primary-dark);
+      }
+      .landing-cta-outline {
+        background: transparent;
+        color: var(--primary-dark);
+        border: 1.5px solid var(--primary);
+      }
+      .landing-cta-outline:hover {
+        background: #fdeee0;
+      }
+      .landing-hero-actions {
+        display: flex;
+        justify-content: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-top: 1.25rem;
+      }
+
+      /* La sección ocupa todo el ancho (para que el fondo de `.landing-section-alt`
+         llegue de borde a borde); `.landing-section-inner` es quien centra el
+         contenido a 1100px — separar ambas cosas es lo que permite alternar
+         bandas de color sin que el contenido pierda el margen centrado. */
+      .landing-section {
+        background: var(--card);
+        border: none;
+        border-radius: 0;
+        padding: 3rem 1.5rem;
+      }
+      .landing-section-alt {
+        background: var(--bg);
+      }
+      .landing-section-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      .landing-section h2 {
+        font-size: 1.5rem;
+        text-align: center;
+        margin-bottom: 0.4rem;
+      }
+      .landing-section p.landing-lead {
+        text-align: center;
+        color: var(--muted);
+        max-width: 640px;
+        margin: 0 auto;
+      }
+
+      .feature-grid,
+      .solutions-grid,
+      .testimonial-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1rem;
+        margin-top: 1.75rem;
+      }
+      .feature-card,
+      .solution-card,
+      .testimonial-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+      }
+      .feature-card {
+        text-align: center;
+      }
+      .feature-card .feature-icon {
+        font-size: 1.75rem;
+      }
+      .solution-card h3 {
+        margin-top: 0;
+      }
+      .solution-card ul {
+        padding-left: 1.1rem;
+        margin: 0.75rem 0;
+      }
+      .solution-card li {
+        margin-bottom: 0.35rem;
+      }
+      .solution-card .solution-fit {
+        color: var(--muted);
+        font-size: 0.9rem;
+        border-top: 1px solid var(--border);
+        padding-top: 0.6rem;
+        margin-top: 0.6rem;
+      }
+      .testimonial-card p.quote {
+        font-style: italic;
+        margin-top: 0;
+      }
+      .testimonial-card .author {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .how-it-works {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1.25rem;
+        margin-top: 1.75rem;
+        counter-reset: step;
+      }
+      .how-it-works > div {
+        text-align: center;
+      }
+      .how-it-works > div::before {
+        counter-increment: step;
+        content: counter(step);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 50%;
+        background: var(--primary);
+        color: white;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+      }
+
+      .faq-list {
+        max-width: 720px;
+        margin: 1.75rem auto 0;
+      }
+      .faq-item {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.85rem 1.1rem;
+        margin-bottom: 0.6rem;
+      }
+      .faq-item summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .faq-item p {
+        color: var(--muted);
+        margin-bottom: 0;
+      }
+
+      .site-footer {
+        border-top: 1px solid var(--border);
+        padding: 2rem 1.5rem;
+        text-align: center;
+      }
+      .site-footer .footer-links {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin: 1rem 0;
+      }
+      .site-footer .footer-links a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.85rem;
+      }
+      .site-footer .footer-links a:hover {
+        color: var(--primary-dark);
+      }
+      .site-footer .footer-fine {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
     </style>
   </head>
   <body>
+    <nav class="landing-nav">
+      <a href="index.html"><img src="assets/logo-mark.png" alt="Domi911" class="brand-logo" /></a>
+      <div class="landing-nav-links">
+        <a href="#servicios">Servicios</a>
+        <a href="#soluciones">Soluciones</a>
+        <a href="#testimonios">Testimonios</a>
+        <a href="#faq">FAQ</a>
+        <a href="courier/index.html">Domiciliarios</a>
+      </div>
+      <div class="landing-nav-actions">
+        <a href="track.html" class="landing-link">📦 Seguir pedido</a>
+        <a href="#auth-section" class="landing-cta js-goto-register">Empezar ahora →</a>
+      </div>
+    </nav>
+
     <header>
       <img src="assets/logo-full.png" alt="Domi911 - Tu pedido, nuestra prioridad" class="brand-logo brand-logo-hero" />
       <p>Pide domiciliarios para tu negocio, directo desde la web.</p>
-      <p class="hint"><a href="admin.html">Tablero de administración</a> · <a href="courier/index.html">App del domiciliario</a></p>
+      <div class="landing-hero-actions">
+        <a href="#auth-section" class="landing-cta js-goto-register">🏢 Pedir domiciliario para mi negocio</a>
+        <a href="courier/index.html" class="landing-cta-outline">🛵 Quiero ser domiciliario</a>
+      </div>
     </header>
+
+    <section class="landing-section">
+      <div class="landing-section-inner">
+        <div class="feature-grid">
+          <div class="feature-card">
+            <div class="feature-icon">⚡</div>
+            <h3>Asignación en 60 segundos</h3>
+            <p class="hint">Se ofrece al domiciliario activo más cercano; si no responde a tiempo, pasa automáticamente al siguiente.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🪪</div>
+            <h3>Cédula + rostro, cada día</h3>
+            <p class="hint">Cada domiciliario se activa a diario con su cédula y una selfie comparada contra su rostro de referencia.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🗺️</div>
+            <h3>Mapa en vivo</h3>
+            <p class="hint">Sigues el trayecto de recogida y de entrega en tiempo real, sin instalar nada de terceros.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">💬</div>
+            <h3>Sin WhatsApp de por medio</h3>
+            <p class="hint">Pides, cotizas y haces seguimiento desde tu propio dashboard — no desde un chat que se pierde entre pedidos.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="servicios" class="landing-section landing-section-alt">
+      <div class="landing-section-inner">
+        <h2>¿Qué hacemos?</h2>
+        <p class="landing-lead">
+          Conectamos tu negocio con el domiciliario activo más cercano, en minutos, sin llamadas ni
+          mensajes de WhatsApp de por medio.
+        </p>
+        <div class="how-it-works">
+          <div>
+            <h3>Pide</h3>
+            <p class="hint">
+              Escribe la dirección de entrega en texto libre desde tu dashboard; el sistema la
+              geocodifica y calcula la tarifa al instante.
+            </p>
+          </div>
+          <div>
+            <h3>Se asigna</h3>
+            <p class="hint">
+              Se le ofrece al domiciliario activo más cercano, con 60 segundos para aceptar antes de
+              pasar al siguiente.
+            </p>
+          </div>
+          <div>
+            <h3>Sigue tu pedido</h3>
+            <p class="hint">
+              Tú lo ves en tu dashboard con mapa en vivo, y tu cliente puede seguirlo con un link,
+              sin necesitar cuenta.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="soluciones" class="landing-section">
+      <div class="landing-section-inner">
+        <h2>Soluciones</h2>
+        <p class="landing-lead">Domi911 sirve a los dos lados del domicilio.</p>
+        <div class="solutions-grid">
+          <div class="solution-card">
+            <h3>🏢 Negocios y restaurantes</h3>
+            <ul>
+              <li>Cotización en texto libre, sin compartir ubicación GPS</li>
+              <li>Tarifa visible antes de confirmar cada pedido</li>
+              <li>Mapa en vivo de recogida y entrega</li>
+              <li>Nombre, placa y teléfono del domiciliario asignado, directo en tu dashboard</li>
+            </ul>
+            <p class="solution-fit">👉 Ideal para restaurantes, tiendas y negocios que hoy reciben pedidos por WhatsApp, redes o su propia web.</p>
+          </div>
+          <div class="solution-card">
+            <h3>🛵 Domiciliarios</h3>
+            <ul>
+              <li>Te activas cada día con tu cédula y una selfie, sin apps complicadas</li>
+              <li>Ves la tarifa y quién maneja el cobro antes de aceptar un pedido</li>
+              <li>Comisión transparente, liquidada por día</li>
+            </ul>
+            <p class="solution-fit">👉 Ideal para moto-mensajeros que quieren decidir cuándo conectarse a trabajar.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="testimonios" class="landing-section landing-section-alt">
+      <div class="landing-section-inner">
+        <h2>Lo que dicen los negocios</h2>
+        <p class="landing-lead">Domi911 es un producto nuevo — estos son ejemplos de cómo lo cuentan negocios que ya lo probaron.</p>
+        <!-- TODO: reemplazar estas 3 tarjetas con testimonios reales de negocios que ya usan Domi911. -->
+        <div class="testimonial-grid">
+          <div class="testimonial-card">
+            <p class="quote">"Antes perdíamos pedidos por no encontrar quién los llevara a tiempo. Ahora se asigna solo."</p>
+            <p class="author">— Restaurante La Esquina</p>
+          </div>
+          <div class="testimonial-card">
+            <p class="quote">"Me gusta que veo la tarifa antes de confirmar, y el cliente puede seguir su pedido sin llamarme."</p>
+            <p class="author">— Tienda Mundo Fresco</p>
+          </div>
+          <div class="testimonial-card">
+            <p class="quote">"Dejamos de coordinar domiciliarios por WhatsApp. Todo queda en un solo lugar."</p>
+            <p class="author">— Panadería Doña Rosa</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq" class="landing-section">
+      <div class="landing-section-inner">
+        <h2>Preguntas frecuentes</h2>
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary>¿Cómo pido un domiciliario para mi negocio?</summary>
+            <p>Regístrate una vez con el botón "Empezar ahora". Desde tu dashboard solo escribes la dirección de entrega; el sistema calcula la tarifa y confirmas antes de que se busque domiciliario.</p>
+          </details>
+          <details class="faq-item">
+            <summary>¿Cómo se calcula la tarifa?</summary>
+            <p>Tarifa base + costo por kilómetro entre el punto de recogida y el de entrega. Siempre la ves antes de confirmar cada pedido.</p>
+          </details>
+          <details class="faq-item">
+            <summary>¿Cómo se asigna el domiciliario?</summary>
+            <p>Automáticamente al domiciliario activo más cercano. Si no acepta en 60 segundos, se le ofrece al siguiente más cercano, y así hasta que alguien acepte.</p>
+          </details>
+          <details class="faq-item">
+            <summary>¿Cómo hago seguimiento de mi pedido?</summary>
+            <p>El negocio lo sigue desde su dashboard. El cliente final puede seguirlo con el link de "Seguir pedido" y el ID de su pedido, sin necesitar cuenta.</p>
+          </details>
+          <details class="faq-item">
+            <summary>¿Cómo me registro como domiciliario?</summary>
+            <p>Con tu cédula y una verificación facial diaria (selfie), desde la app del domiciliario — es una PWA, no hay que instalarla desde ninguna tienda de apps.</p>
+          </details>
+          <details class="faq-item">
+            <summary>¿Hay contratos o pagos mínimos?</summary>
+            <p>No. Te registras y pides (o trabajas) cuando lo necesites. El cobro del servicio se acuerda directamente entre el negocio y el domiciliario; Domi911 todavía no procesa pagos.</p>
+          </details>
+        </div>
+      </div>
+    </section>
 
     <main>
       <section id="auth-section">
@@ -82,10 +467,38 @@
       </section>
     </main>
 
+    <footer class="site-footer">
+      <img src="assets/logo-mark.png" alt="Domi911" class="brand-logo" />
+      <div class="footer-links">
+        <a href="#servicios">Servicios</a>
+        <a href="#soluciones">Soluciones</a>
+        <a href="#testimonios">Testimonios</a>
+        <a href="#faq">FAQ</a>
+        <a href="courier/index.html">App del domiciliario</a>
+        <a href="track.html">Seguir pedido</a>
+        <a href="admin.html">Tablero de administración</a>
+      </div>
+      <p class="footer-fine">Domi911 · Tu pedido, nuestra prioridad</p>
+    </footer>
+
     <script>
       // Cambia esta URL si el backend corre en otro host/puerto (por ejemplo, en producción).
       window.DOMI911_API_URL = window.DOMI911_API_URL || "http://localhost:3000";
     </script>
     <script src="auth.js"></script>
+    <script>
+      // "Empezar ahora" y el CTA del hero deben dejar directo el formulario de
+      // registro del negocio (no el de login, que es la pestaña por defecto).
+      document.querySelectorAll(".js-goto-register").forEach((el) => {
+        el.addEventListener("click", () => {
+          const registerTab = document.getElementById("tab-register");
+          if (registerTab && !registerTab.classList.contains("active")) registerTab.click();
+        });
+      });
+      if (location.hash === "#auth-section") {
+        const registerTab = document.getElementById("tab-register");
+        if (registerTab) registerTab.click();
+      }
+    </script>
   </body>
 </html>

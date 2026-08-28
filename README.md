@@ -52,16 +52,28 @@ Negocio y domiciliario se modelan como entidades separadas (`Business`,
 `Courier`), no como filas de una tabla `users` con un campo `role` —
 ver `docs/ARCHITECTURE.md` §2.
 
+## Landing page y seguimiento público
+
+`frontend/index.html` es la landing page pública (servicios, soluciones,
+testimonios, FAQ, y los links a "Domiciliarios" y "Seguir pedido") que
+termina en el mismo login/registro del negocio de siempre — no es una
+página aparte. `frontend/track.html` es nueva: seguimiento de un pedido
+por su ID, sin necesitar cuenta, para que el negocio se lo comparta
+directamente a su cliente final (ver `GET /api/orders/:id/track` en la
+tabla de la API más abajo, y `docs/ARCHITECTURE.md` §11).
+
 ## Estructura del repo
 
 ```
 domi911/
 ├── backend/            API (Node.js + TypeScript + Express + Postgres/PostGIS)
 ├── frontend/
-│   ├── index.html         Login / registro del negocio
+│   ├── index.html         Landing page (servicios, soluciones, testimonios, FAQ) + login/registro del negocio
+│   ├── track.html          Seguimiento público de un pedido por ID, sin necesitar cuenta
 │   ├── dashboard.html      Dashboard del negocio: "Pedir domiciliario" + mapa en vivo
 │   ├── admin.html          Tablero de administración (monitoreo + reasignar/cancelar/asignar)
 │   ├── courier/            PWA del domiciliario (activación, ubicación, ofertas, captura facial)
+│   ├── assets/             Logo/favicon/iconos de la marca
 │   └── vendor/
 │       ├── leaflet/        Leaflet vendorizado localmente (no un CDN) para el mapa
 │       └── face-api/       face-api.js + modelos vendorizados localmente para la verificación facial
@@ -298,6 +310,7 @@ funcionalidad, incluida la validación en navegador con Playwright).
 | GET | `/api/orders/:id` | Consultar estado de un pedido — requiere el token del negocio dueño |
 | GET | `/api/orders/:id/courier-location` | Ubicación en vivo del domiciliario ya asignado a este pedido (para el mapa; `{"location":null}` si aún no hay ninguno) |
 | GET | `/api/orders/:id/courier-contact` | Nombre, placa y teléfono del domiciliario asignado (para el dashboard; `{"courier":null}` si aún no hay ninguno) — requiere el token del negocio dueño |
+| GET | `/api/orders/:id/track` | Seguimiento público para el cliente final (`frontend/track.html`), sin cuenta: estado, direcciones y contacto del domiciliario si ya hay uno — sin nada del negocio, del cliente ni de pagos |
 | POST | `/api/orders/:id/accept` | El domiciliario cuyo token es al que le toca el turno acepta el pedido (`courierId` sale del token, no del body; `409` si no es su turno o ya no está disponible) |
 | POST | `/api/orders/:id/picked-up` | Marcar como recogido / en curso (arranca el segundo tramo del mapa y la geocerca de entrega) — requiere el token del domiciliario asignado (`403` si es otro) |
 | POST | `/api/orders/:id/delivered` | Marcar como entregado a mano (respaldo del cierre automático por geocerca) — requiere el token del domiciliario asignado (`403` si es otro) |
@@ -321,7 +334,9 @@ están protegidas por el token JWT del negocio (`Authorization: Bearer <token>`,
 `location`, `accept`, `picked-up` y `delivered` están protegidas por el
 token de sesión del domiciliario (mismo esquema de cabecera, emitido por
 `/activate`, ver `docs/ARCHITECTURE.md` §11) — `403` si el token no
-corresponde al dueño del recurso.
+corresponde al dueño del recurso. `courier-location` y `track` son las dos
+únicas rutas de `/api/orders/*` deliberadamente públicas — ambas exponen
+solo lo mínimo (ver la tabla arriba).
 
 Eventos de Socket.io emitidos por el backend: `order:offer` (a cada
 domiciliario candidato), `order:won` (al ganador), `order:status` (a quien

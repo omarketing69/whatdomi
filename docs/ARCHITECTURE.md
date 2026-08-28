@@ -741,6 +741,42 @@ Esto se acompañó de una máquina de estados con actor en
 ver §4) para que ni siquiera con un token válido se pueda saltar pasos
 del ciclo de vida del pedido o tocar el de otro domiciliario.
 
+**Landing page** (`frontend/index.html`, inspirada en la estructura de
+sitios como domicililiarios.co, pero con copy y features honestos a este
+MVP): antes era solo el formulario de login/registro; ahora hay un nav
+(Servicios, Soluciones, Testimonios, FAQ, Domiciliarios, Seguir pedido,
+Empezar ahora), un hero con dos CTAs (negocio / domiciliario), una fila de
+features reales del producto (cascada de 60s, cédula + rostro, mapa en
+vivo), una sección de "cómo funciona" en 3 pasos, dos tarjetas de
+soluciones (negocios / domiciliarios), una sección de testimonios y un FAQ
+con `<details>/<summary>` nativos (sin JS nuevo). El login/registro que ya
+existía queda intacto al final de la página (`#auth-section`, sin tocar
+`auth.js`) — el CTA "Empezar ahora" solo hace scroll ahí y pre-selecciona
+la pestaña de registro. Deliberadamente NO hay pestañas de "Empresas"
+(tier B2B/SaaS) ni "Ciudades" como en el sitio de referencia: Domi911 no
+tiene ese tier, y no está atado a ciudades fijas (`DEFAULT_CITY`/
+`DEFAULT_COUNTRY` son configurables por despliegue, ver `.env.example`).
+Los testimonios son placeholders marcados con un comentario `<!-- TODO -->`
+en el HTML — Domi911 es un MVP nuevo sin clientes reales todavía.
+
+**Seguimiento público del pedido** (`frontend/track.html` +
+`GET /api/orders/:id/track`): el link "Seguir pedido" del nav/footer lleva
+a una página donde el **cliente final** del negocio (no el negocio, que ya
+tiene su dashboard) puede consultar el estado de su pedido con solo el
+`orderId`, sin necesitar cuenta — el negocio se lo comparte directamente
+(ej. por WhatsApp). Es seguro exponerlo sin autenticación porque
+`orders.id` es un UUID (`gen_random_uuid()`, ver `db/schema.sql`), no
+enumerable — mismo modelo de confianza que un link de seguimiento de una
+transportadora. El endpoint sigue el mismo criterio de exposición mínima
+que ya usa `courier-contact` para el negocio: devuelve `status`,
+`pickupAddress`, `dropoffAddress`, `createdAt` y, si ya hay domiciliario
+asignado, su `name`/`vehiclePlate`/`phone` — nunca `businessId`,
+`customerName`/`customerPhone`/`notes` ni `merchandiseValue`/`paymentMode`.
+El mapa en vivo de `track.html` reusa el ya-público
+`GET /api/orders/:id/courier-location` (mismo patrón, sin duplicar lógica
+de ubicación) y no expone las coordenadas de recogida/entrega, que
+`/track` deliberadamente no incluye.
+
 ## 12. Fuera de alcance en este MVP
 
 - **Pagos**: tanto el cobro del servicio (negocio → domiciliario) como el

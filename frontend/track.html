@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Domi911 - Seguir mi pedido</title>
+    <link rel="icon" href="assets/favicon.ico" />
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Mismo motivo que en dashboard.html: Leaflet vendorizado localmente, no un CDN. -->
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+    <style>
+      #map {
+        height: 220px;
+        border-radius: 8px;
+        margin-top: 0.75rem;
+        border: 1px solid var(--border);
+      }
+      .courier-contact {
+        background: #fdeee0;
+        border-radius: 8px;
+        padding: 0.75rem;
+        font-size: 0.9rem;
+      }
+      .track-form {
+        flex-direction: row;
+        gap: 0.5rem;
+      }
+      .track-form input {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a href="index.html"><img src="assets/logo-mark.png" alt="Domi911" class="brand-logo" /></a>
+      <h1 style="font-size: 1.1rem; margin-top: 0.4rem;">Seguir mi pedido</h1>
+      <p>Ingresa el ID de pedido que te compartió el negocio.</p>
+    </header>
+
+    <main>
+      <section>
+        <form id="track-form" class="track-form">
+          <input type="text" id="order-id-input" placeholder="ID de tu pedido" required />
+          <button type="submit">Buscar</button>
+        </form>
+        <p id="track-status" class="status"></p>
+      </section>
+
+      <section id="result-section" hidden>
+        <h2>Estado de tu pedido</h2>
+        <div id="order-summary"></div>
+        <div id="courier-contact" class="courier-contact" hidden></div>
+      </section>
+
+      <section id="map-section" hidden>
+        <h2>Ubicación en vivo</h2>
+        <div id="map"></div>
+        <p class="hint" id="map-hint"></p>
+      </section>
+    </main>
+
+    <script src="vendor/leaflet/leaflet.js"></script>
+    <script>
+      window.DOMI911_API_URL = window.DOMI911_API_URL || "http://localhost:3000";
+    </script>
+    <script src="track.js"></script>
+  </body>
+</html>
